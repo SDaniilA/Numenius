@@ -1,0 +1,6 @@
+{
+  "Mode": "Simple",
+  "MaxHistorySize": 20,
+  "TimeWindowMinutes": 5,
+  "MinScore": 0.3
+}

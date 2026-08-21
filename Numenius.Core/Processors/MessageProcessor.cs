@@ -19,6 +19,7 @@ namespace Numenius.Core.Processors
         private readonly List<IPredictor> _predictors;
         private readonly OutputCache _outputCache;
         private readonly FilterConfig _filterConfig;
+        private readonly IContextAnalyzer _contextAnalyzer;
 
         public MessageProcessor(
             INlpParser nlp,
@@ -27,7 +28,8 @@ namespace Numenius.Core.Processors
             IScenarioManager scenarioManager,
             List<IPredictor> predictors,
             OutputCache outputCache,
-            FilterConfig filterConfig)
+            FilterConfig filterConfig,
+            IContextAnalyzer contextAnalyzer)
         {
             _nlp = nlp;
             _geo = geo;
@@ -36,6 +38,7 @@ namespace Numenius.Core.Processors
             _predictors = predictors;
             _outputCache = outputCache;
             _filterConfig = filterConfig ?? new FilterConfig();
+            _contextAnalyzer = contextAnalyzer ?? throw new ArgumentNullException(nameof(contextAnalyzer));
         }
 
         public async Task<ParsedMessage?> ProcessAsync(RawMessage raw, CancellationToken cancellationToken)
@@ -55,11 +58,27 @@ namespace Numenius.Core.Processors
 
             var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
 
+            // Контекстный анализ: если сообщение не содержит топонимов, но имеет тип угрозы или статус
+            if (parsed.Settlements.Count == 0 && (parsed.ThreatType != "Unknown" || parsed.Status == "Watch" || parsed.Flags.Count > 0))
+            {
+                var context = _contextAnalyzer.FindContext(parsed, raw.Text);
+                if (context != null)
+                {
+                    parsed.Settlements = context.Settlements.ToList();
+                    parsed.Direction = context.Direction;
+                    parsed.ThreatType = context.ThreatType;
+                    parsed.Category = context.Category;
+                    parsed.Confidence = Math.Max(parsed.Confidence, context.Confidence * 0.7);
+                    parsed.Flags.Add("ContextApplied");
+                }
+            }
+
             if (parsed.Settlements.Count == 0 && parsed.Status == "Active" && parsed.Flags.Count == 0)
             {
                 await _db.SaveParsedMessageAsync(parsed);
                 _outputCache.AddParsedMessage(parsed);
                 Console.WriteLine($"ℹ️ Сообщение без НП и без статуса: {parsed.CleanedText}");
+                _contextAnalyzer.AddMessage(parsed);
                 return parsed;
             }
 
@@ -80,6 +99,7 @@ namespace Numenius.Core.Processors
                 }
                 await _db.SaveParsedMessageAsync(parsed);
                 _outputCache.AddParsedMessage(parsed);
+                _contextAnalyzer.AddMessage(parsed);
                 return parsed;
             }
 
@@ -105,6 +125,7 @@ namespace Numenius.Core.Processors
             }
 
             _outputCache.AddParsedMessage(parsed);
+            _contextAnalyzer.AddMessage(parsed);
 
             return parsed;
         }

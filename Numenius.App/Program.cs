@@ -81,7 +81,16 @@ namespace Numenius.App
             var scenarioManager = new ScenarioManager(db, geo, heuristics);
             var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
                 Path.Combine(appSettingsPath, "predictor_config.json"));
-
+			// ===== Контекстный анализатор =====
+            string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
+            if (!File.Exists(contextConfigPath))
+            {
+                var defaultContext = new ContextAnalyzerConfig();
+                ConfigLoader.SaveConfig(defaultContext, contextConfigPath);
+            }
+            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
+            IContextAnalyzer contextAnalyzer = new SimpleContextAnalyzer(contextConfig);
+            Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
             IPredictor predictor;
             if (predictorConfig.Graph.Enabled)
             {
@@ -100,7 +109,8 @@ namespace Numenius.App
 
             var filterConfig = new FilterConfig();
             //var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor> { predictor }, outputCache, filterConfig);
-			var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor>(), outputCache, filterConfig);
+			/* var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor>(), outputCache, filterConfig); */
+            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor>(), outputCache, filterConfig, contextAnalyzer);			
             var importer = new OfflineImporter(processor, db);
             await importer.ImportAsync(jsonPath);
 
@@ -205,12 +215,36 @@ namespace Numenius.App
 			
             if (predictors.Count == 0)
                 throw new Exception("Нет активных предикторов.");
+            // ===== Контекстный анализатор =====
+            string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
+            if (!File.Exists(contextConfigPath))
+            {
+                var defaultContext = new ContextAnalyzerConfig();
+                ConfigLoader.SaveConfig(defaultContext, contextConfigPath);
+            }
+            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
 
+            IContextAnalyzer contextAnalyzer;
+            switch (contextConfig.Mode.ToLowerInvariant())
+            {
+                case "tfidf":
+                    contextAnalyzer = new TfIdfContextAnalyzer(contextConfig);
+                    Console.WriteLine("🧠 TF-IDF контекстный анализатор активирован.");
+                    break;
+                case "ensemble":
+                    contextAnalyzer = new EnsembleContextAnalyzer(contextConfig);
+                    Console.WriteLine("🧠 Ансамблевый контекстный анализатор активирован.");
+                    break;
+                default:
+                    contextAnalyzer = new SimpleContextAnalyzer(contextConfig);
+                    Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
+                    break;
+            }
             var nlp = new NlpParser(geo);
             var outputCache = new OutputCache();
             var scenarioManager = new ScenarioManager(db, geo, heuristics);
-            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig);
-
+            /* var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig); */
+            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig, contextAnalyzer);
             /* var consoleOutput = new ConsoleOutputModule();
             string ttsConfigPath = Path.Combine(appSettingsPath, "tts_output.json");
             if (!File.Exists(ttsConfigPath))
