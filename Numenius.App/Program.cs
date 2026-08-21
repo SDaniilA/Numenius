@@ -76,7 +76,8 @@ namespace Numenius.App
             await db.InitializeAsync();
 
             var geo = new GeoService(db, Path.Combine(appSettingsPath, "settlements.json"));
-            var nlp = new NlpParser(geo);
+            var normalizer = new PorterStemmerNormalizer();
+			var nlp = new NlpParser(geo, normalizer);
             var outputCache = new OutputCache();
             var scenarioManager = new ScenarioManager(db, geo, heuristics);
             var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
@@ -224,7 +225,7 @@ namespace Numenius.App
             }
             var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
 
-            IContextAnalyzer contextAnalyzer;
+			IContextAnalyzer contextAnalyzer;
             switch (contextConfig.Mode.ToLowerInvariant())
             {
                 case "tfidf":
@@ -240,7 +241,8 @@ namespace Numenius.App
                     Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
                     break;
             }
-            var nlp = new NlpParser(geo);
+            var normalizer = new PorterStemmerNormalizer();
+			var nlp = new NlpParser(geo, normalizer);
             var outputCache = new OutputCache();
             var scenarioManager = new ScenarioManager(db, geo, heuristics);
             /* var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig); */

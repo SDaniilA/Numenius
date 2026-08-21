@@ -3,29 +3,29 @@
     {
       "Type": "Toast",
       "Enabled": true,
-      "ConfigFile": "appsettings/toast_source.json"
+      "ConfigFile": "toast_source.json"
     },
     {
       "Type": "Manual",
       "Enabled": true,
-      "ConfigFile": "appsettings/manual_input.json"
+      "ConfigFile": "manual_input.json"
     }
   ],
   "Outputs": [
     {
       "Type": "Console",
       "Enabled": true,
-      "ConfigFile": "appsettings/console_output.json"
+      "ConfigFile": "console_output.json"
     },
     {
       "Type": "Tts",
       "Enabled": true,
-      "ConfigFile": "appsettings/tts_output.json"
+      "ConfigFile": "tts_output.json"
     },
     {
       "Type": "Mqtt",
       "Enabled": false,
-      "ConfigFile": "appsettings/mqtt_output.json"
+      "ConfigFile": "mqtt_output.json"
     }
   ],
   "QueueMaxSize": 500,

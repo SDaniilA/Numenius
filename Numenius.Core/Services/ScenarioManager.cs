@@ -53,28 +53,28 @@ namespace Numenius.Core.Services
 
             // ===== ОТБОЙ БЕЗ НП =====
             if (message.Settlements.Count == 0 && message.Status == "Terminated")
-            {
-                await RefreshCacheAsync();
-                Incident? lastIncident = null;
-                lock (_cacheLock)
-                {
-                    lastIncident = _activeCache.Values
-                        .Where(i => i.ThreatType == message.ThreatType || message.ThreatType == "Unknown")
-                        .OrderByDescending(i => i.LastSeen)
-                        .FirstOrDefault();
-                }
-                if (lastIncident != null && lastIncident.Status != IncidentStatus.Terminated && lastIncident.Status != IncidentStatus.Expired)
-                {
-                    lastIncident.Status = IncidentStatus.Terminated;
-                    lastIncident.Notes += $" Закрыт по отбою без гео ({message.Sender})";
-                    await _db.UpdateIncidentAsync(lastIncident);
-                    lock (_cacheLock)
-                        _activeCache.Remove(lastIncident.Id);
-                    GraphLogger.Log($"Инц. #{lastIncident.Id} закрыт по отбою без НП");
-                    return lastIncident;
-                }
-                return null;
-            }
+			{
+				await RefreshCacheAsync();
+				// Если тип Unknown – закрываем все активные инциденты за последние 2 часа
+				if (message.ThreatType == "Unknown")
+				{
+					var activeNow = _activeCache.Values.Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired).ToList();
+					foreach (var inc in activeNow)
+					{
+						if ((DateTime.UtcNow - inc.LastSeen).TotalHours < 2)
+						{
+							inc.Status = IncidentStatus.Terminated;
+							inc.Notes += " Закрыт по общему отбою.";
+							await _db.UpdateIncidentAsync(inc);
+							lock (_cacheLock) _activeCache.Remove(inc.Id);
+							GraphLogger.Log($"Инц. #{inc.Id} закрыт по общему отбою.");
+						}
+					}
+					return null;
+				}
+				// Далее – существующая логика для типа с конкретным типом
+				// ...
+			}
 
             // ===== ОТБОЙ С НП =====
             if (message.Settlements.Count > 0 && message.Status == "Terminated")

@@ -82,6 +82,7 @@ namespace Numenius.Core.Sources
                 }
 
                 Console.WriteLine("✅ Toast источник запущен.");
+				Console.WriteLine($"🗑️ Режим удаления уведомлений: {_config.DeleteMode}");
                 _pollingTimer = new Timer(
                     _ => CheckNotificationsAsync(cancellationToken).Wait(),
                     null,
@@ -159,10 +160,17 @@ namespace Numenius.Core.Sources
                     }
 
                     if (_config.DeleteMode == "immediate")
-                    {
-                        try { _listener.RemoveNotification(id); }
-                        catch { }
-                    }
+					{
+						try
+						{
+							_listener.RemoveNotification(id);
+							Console.WriteLine($"🗑️ Удалено уведомление {id}");
+						}
+						catch (Exception ex)
+						{
+							Console.WriteLine($"⚠️ Не удалось удалить уведомление {id}: {ex.Message}");
+						}
+					}
 
                     // Периодически сохраняем ID
                     if (_processedIds.Count % 10 == 0)

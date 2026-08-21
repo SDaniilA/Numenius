@@ -12,7 +12,6 @@ namespace Numenius.Core.Predictors
 {
     /// <summary>
     /// Предиктор на основе экстраполяции траектории движения по последним точкам.
-    /// Вычисляет скорость, направление и прогнозирует следующую точку с учётом времени.
     /// </summary>
     public class TrajectoryPredictor : IPredictor
     {
@@ -33,56 +32,62 @@ namespace Numenius.Core.Predictors
 
         public async Task<Prediction?> GeneratePredictionAsync(Incident incident)
         {
+			Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
             if (incident == null || incident.Points == null || incident.Points.Count < 2)
+				Console.WriteLine($"[{Name}] Возврат null: причина (incident == null || incident.Points == null || incident.Points.Count < 2)");
                 return null;
 
             if (incident.Status == IncidentStatus.Terminated || incident.Status == IncidentStatus.Expired)
                 return null;
 
-            // Берём последние точки (не менее 2, максимум 5)
             var points = incident.Points.OrderBy(p => p.Time).TakeLast(Math.Min(5, incident.Points.Count)).ToList();
             if (points.Count < 2)
+				Console.WriteLine($"[{Name}] Возврат null: причина (points.Count < 2)");
                 return null;
 
-            // Вычисляем среднюю скорость и направление (азимут)
             var (speedKmh, azimuthDeg) = CalculateMotion(points);
-
-            // Если скорость близка к нулю, прогноз не имеет смысла
             if (speedKmh < 0.1)
+				Console.WriteLine($"[{Name}] Возврат null: причина (speedKmh < 0.1)");
                 return null;
 
-            // Экстраполируем позицию на время окна атаки (по умолчанию AttackWindowMinutes)
             double windowMinutes = _heuristics.AttackWindowMinutes;
             double hours = windowMinutes / 60.0;
             double distanceKm = speedKmh * hours;
+            double maxDistance = _config.MaxPredictionDistanceKm;
+            if (distanceKm > maxDistance)
+            {
+                distanceKm = maxDistance;
+                hours = distanceKm / speedKmh;
+                windowMinutes = hours * 60.0;
+            }
 
-            // Предсказанная точка (координаты)
             var lastPoint = points.Last();
             var predictedPoint = ProjectPoint(lastPoint.Lat, lastPoint.Lon, azimuthDeg, distanceKm);
 
-            // Ближайший населённый пункт к предсказанной точке
-            var nearestSettlement = FindNearestSettlement(predictedPoint.Lat, predictedPoint.Lon, _config.MaxSearchRadiusKm);
+            // Ищем ближайший НП (без ограничения радиуса)
+            var nearestSettlement = FindNearestSettlement(predictedPoint.Lat, predictedPoint.Lon);
 
-            // Время прибытия (от последней точки)
             DateTime arrivalTime = lastPoint.Time.AddHours(distanceKm / speedKmh);
 
-            // Окно атаки: +/- 20% от расчётного времени
             double uncertainty = _config.UncertaintyPercent / 100.0;
             DateTime windowStart = arrivalTime.AddHours(-arrivalTime.Subtract(lastPoint.Time).TotalHours * uncertainty);
             DateTime windowEnd = arrivalTime.AddHours(arrivalTime.Subtract(lastPoint.Time).TotalHours * uncertainty);
 
-            // Уверенность: зависит от количества точек, скорости, расстояния до ближайшего НП
             double confidence = CalculateConfidence(points, speedKmh, distanceKm, nearestSettlement);
 
-            // Строим геозону: полигон вокруг предсказанной точки с радиусом, зависящим от неопределённости
             string zoneGeoJson = BuildZoneGeoJson(predictedPoint, nearestSettlement, distanceKm * uncertainty);
 
-            // Список затронутых поселений
             var affectedSettlements = new List<string>();
             if (nearestSettlement != null)
                 affectedSettlements.Add(nearestSettlement.Name);
             else
                 affectedSettlements.Add($"({predictedPoint.Lat:F4}, {predictedPoint.Lon:F4})");
+
+            string notes = $"Траекторный прогноз: скорость {speedKmh:F1} км/ч, азимут {azimuthDeg:F1}°, дальность {distanceKm:F1} км";
+            if (nearestSettlement != null)
+                notes += $", ближайший НП: {nearestSettlement.Name} ({nearestSettlement.Lat:F4}, {nearestSettlement.Lon:F4})";
+            else
+                notes += $", предсказанная точка: ({predictedPoint.Lat:F4}, {predictedPoint.Lon:F4})";
 
             var prediction = new Prediction
             {
@@ -93,56 +98,31 @@ namespace Numenius.Core.Predictors
                 AttackWindowStart = windowStart,
                 AttackWindowEnd = windowEnd,
                 Confidence = confidence,
-                Notes = $"Траекторный прогноз: скорость {speedKmh:F1} км/ч, азимут {azimuthDeg:F1}°, дальность {distanceKm:F1} км"
+                Notes = notes,
+                PredictorType = Name
             };
 
-            GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements));
-			// DEBUG
-			Console.WriteLine($"   [Trajectory] Уверенность: {prediction.Confidence:P0}, зоны: {string.Join(", ", prediction.AffectedSettlements)}");
-			// DEBUG
+            GraphLogger.LogPrediction(incident.Id, incident.ThreatType ?? "Unknown", prediction.Confidence, string.Join(", ", prediction.AffectedSettlements), Name);
             return prediction;
         }
 
-        /// <summary>
-        /// Вычисляет среднюю скорость (км/ч) и азимут (градусы) по цепочке точек.
-        /// </summary>
         private (double SpeedKmh, double AzimuthDeg) CalculateMotion(List<IncidentPoint> points)
         {
             if (points.Count < 2)
                 return (0, 0);
 
-            double totalDist = 0;
-            double totalTimeHours = 0;
-            double bearingSum = 0;
-            int bearingCount = 0;
-
-            for (int i = 1; i < points.Count; i++)
-            {
-                var p1 = points[i - 1];
-                var p2 = points[i];
-                double dist = _geo.CalculateDistance(p1.Lat, p1.Lon, p2.Lat, p2.Lon);
-                double hours = (p2.Time - p1.Time).TotalHours;
-                if (hours < 0.001) continue; // избегаем деления на ноль
-
-                totalDist += dist;
-                totalTimeHours += hours;
-
-                double bearing = CalculateBearing(p1.Lat, p1.Lon, p2.Lat, p2.Lon);
-                bearingSum += bearing;
-                bearingCount++;
-            }
-
-            if (totalTimeHours < 0.001 || bearingCount == 0)
+            var last = points[points.Count - 1];
+            var prev = points[points.Count - 2];
+            double dist = _geo.CalculateDistance(prev.Lat, prev.Lon, last.Lat, last.Lon);
+            double hours = (last.Time - prev.Time).TotalHours;
+            if (hours < 0.001)
                 return (0, 0);
 
-            double speed = totalDist / totalTimeHours;
-            double avgBearing = bearingSum / bearingCount;
-            return (speed, avgBearing);
+            double speed = dist / hours;
+            double bearing = CalculateBearing(prev.Lat, prev.Lon, last.Lat, last.Lon);
+            return (speed, bearing);
         }
 
-        /// <summary>
-        /// Вычисляет азимут (в градусах) между двумя точками.
-        /// </summary>
         private double CalculateBearing(double lat1, double lon1, double lat2, double lon2)
         {
             double dLon = (lon2 - lon1) * Math.PI / 180;
@@ -156,12 +136,9 @@ namespace Numenius.Core.Predictors
             return (bearing + 360) % 360;
         }
 
-        /// <summary>
-        /// Проецирует точку на заданное расстояние по азимуту.
-        /// </summary>
         private IncidentPoint ProjectPoint(double lat, double lon, double azimuthDeg, double distanceKm)
         {
-            const double R = 6371; // радиус Земли в км
+            const double R = 6371;
             double latRad = lat * Math.PI / 180;
             double lonRad = lon * Math.PI / 180;
             double bearingRad = azimuthDeg * Math.PI / 180;
@@ -180,13 +157,10 @@ namespace Numenius.Core.Predictors
             };
         }
 
-        /// <summary>
-        /// Находит ближайший населённый пункт к заданным координатам в радиусе maxRadius км.
-        /// </summary>
-        private Settlement? FindNearestSettlement(double lat, double lon, double maxRadius)
+        private Settlement? FindNearestSettlement(double lat, double lon)
         {
             Settlement? nearest = null;
-            double bestDist = maxRadius;
+            double bestDist = double.MaxValue;
 
             foreach (var name in _geo.GetAllSettlementNames())
             {
@@ -202,28 +176,20 @@ namespace Numenius.Core.Predictors
             return nearest;
         }
 
-        /// <summary>
-        /// Строит GeoJSON-полигон вокруг точки с радиусом.
-        /// </summary>
         private string BuildZoneGeoJson(IncidentPoint center, Settlement? nearest, double radiusKm)
         {
             if (radiusKm < 0.1) radiusKm = 1.0;
             var points = new List<IncidentPoint> { center };
-            return _geo.BuildZoneGeoJson(points, radiusKm * 2); // Используем ширину зоны = 2*радиус
+            return _geo.BuildZoneGeoJson(points, radiusKm * 2);
         }
 
-        /// <summary>
-        /// Вычисляет уверенность прогноза.
-        /// </summary>
         private double CalculateConfidence(List<IncidentPoint> points, double speedKmh, double distanceKm, Settlement? nearest)
         {
-            double confidence = 0.5; // базовая
+            double confidence = 0.5;
 
-            // Чем больше точек, тем выше уверенность
             double pointFactor = Math.Min(1.0, points.Count / 5.0);
             confidence += pointFactor * 0.2;
 
-            // Чем стабильнее скорость (малая вариация), тем выше уверенность
             if (points.Count >= 3)
             {
                 double avgSpeed = 0;
@@ -263,28 +229,13 @@ namespace Numenius.Core.Predictors
                 }
             }
 
-            // Если есть ближайший НП в разумном радиусе, повышаем уверенность
             if (nearest != null)
-            {
-                double distToNp = _geo.CalculateDistance(points.Last().Lat, points.Last().Lon, nearest.Lat, nearest.Lon);
-                if (distToNp < _config.MaxSearchRadiusKm)
-                    confidence += 0.1;
-            }
+                confidence += 0.1;
 
-            // Если прогнозная дальность слишком большая, снижаем уверенность
             if (distanceKm > 50)
                 confidence -= 0.1;
 
             return Math.Clamp(confidence, 0.0, 1.0);
         }
     }
-
-    /// <summary>
-    /// Конфигурация для TrajectoryPredictor.
-    /// </summary>
-    /* public class TrajectoryPredictorConfig
-    {
-        public double MaxSearchRadiusKm { get; set; } = 30.0; // радиус поиска ближайшего НП
-        public double UncertaintyPercent { get; set; } = 20.0; // неопределённость окна (% от времени)
-    } */
 }

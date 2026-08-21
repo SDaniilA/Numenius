@@ -37,10 +37,10 @@ namespace Numenius.Core.Utilities
             Log($"Граф построен: {nodes} узлов, {edges} рёбер, за {buildTimeSeconds:F2} с.");
         }
 
-        public static void LogPrediction(int incidentId, string threatType, double confidence, string zones)
-        {
-            Log($"Прогноз для инцидента #{incidentId}: {threatType}, уверенность {confidence:P0}, зоны: {zones}");
-        }
+		public static void LogPrediction(int incidentId, string threatType, double confidence, string zones, string predictorType = "Unknown")
+		{
+			Log($"Прогноз для инцидента #{incidentId}: {threatType}, уверенность {confidence:P0}, зоны: {zones} [{predictorType}]");
+		}
 
         public static void LogIncidentCreated(int incidentId, string threatType, string settlement)
         {

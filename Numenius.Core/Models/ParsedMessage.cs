@@ -11,6 +11,7 @@ namespace Numenius.Core.Models
         public string Id { get; set; } = string.Empty;            // Ссылка на RawMessage.Id
         public string SourceType { get; set; } = string.Empty;
         public string Sender { get; set; } = string.Empty;
+		public string SourceMessageId { get; set; } = string.Empty; // ID исходного сообщения (RawMessage.Id)
         public DateTime ReceivedAt { get; set; }
 
         /// <summary>Тип угрозы (FPV, Hornet, Shark, Recon, Rocket, Unknown)</summary>

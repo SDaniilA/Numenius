@@ -76,15 +76,16 @@ namespace Numenius.App
                     _timestamps.Add(receivedAt);
 
                     var raw = new RawMessage
-                    {
-                        Id = $"import_{msg.Id}_{msg.Date}",
-                        SourceType = "Telegram",
-                        Sender = msg.From ?? root.Name ?? "Unknown",
-                        Text = text,
-                        ReceivedAt = receivedAt,
-                        Priority = 3
-                    };
-
+					{
+						Id = $"import_{msg.Id}_{msg.Date}",
+						SourceType = "Telegram",
+						Sender = msg.From ?? root.Name ?? "Unknown",
+						Text = text,
+						ReceivedAt = receivedAt,
+						Priority = 3,
+						ReplyToMessageId = msg.ReplyToMessageId?.ToString() // <-- добавлено
+					};
+					
                     await _processor.ProcessAsync(raw, cts.Token);
                     _processed++;
                     if (_processed % 100 == 0)
@@ -220,6 +221,9 @@ namespace Numenius.App
 
             [JsonProperty("from")]
             public string From { get; set; } = string.Empty;
+			
+			[JsonProperty("reply_to_message_id")]
+			public long? ReplyToMessageId { get; set; }
 
             [JsonProperty("text")]
             public object? Text { get; set; }

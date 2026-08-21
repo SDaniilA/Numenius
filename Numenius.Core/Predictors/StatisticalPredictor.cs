@@ -368,10 +368,11 @@ namespace Numenius.Core.Predictors
                 AttackWindowStart = windowStart,
                 AttackWindowEnd = windowEnd,
                 Confidence = confidence,
-                Notes = $"Статистический прогноз: направление {best.Direction}, переходов={bestCandidates.Count}, уверенность={confidence:P0}"
+                Notes = $"Статистический прогноз: направление {best.Direction}, переходов={bestCandidates.Count}, уверенность={confidence:P0}",
+				PredictorType = Name,   // "Statistical"
             };
 
-            GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements));
+            GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements), Name);
             return prediction;
         }
 

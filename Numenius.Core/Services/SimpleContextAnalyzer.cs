@@ -98,7 +98,10 @@ namespace Numenius.Core.Services
                 return bestMatch;
             return null;
         }
-
+		public ParsedMessage? FindMessageById(string id)
+		{
+			return _history.FirstOrDefault(m => m.SourceMessageId == id);
+		}
         private List<string> GetTokens(string text)
         {
             if (string.IsNullOrWhiteSpace(text))

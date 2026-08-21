@@ -56,7 +56,28 @@ namespace Numenius.Core.Processors
                 if (blocked) return null;
             }
 
-            var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
+            // Поиск контекста через reply_to_message_id
+            ParsedMessage? contextMessage = null;
+			if (!string.IsNullOrEmpty(raw.ReplyToMessageId))
+			{
+				contextMessage = _contextAnalyzer.FindMessageById(raw.ReplyToMessageId);
+				if (contextMessage != null)
+					Console.WriteLine($"🧠 Найден контекст по reply: {raw.ReplyToMessageId} -> {contextMessage.CleanedText}");
+			}
+
+			var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
+			parsed.SourceMessageId = raw.Id;
+
+			if (contextMessage != null && parsed.Settlements.Count == 0)
+			{
+				Console.WriteLine($"🧠 Контекст из reply применён: {string.Join(",", contextMessage.Settlements.Select(s => s.Name))}");
+				parsed.Settlements = contextMessage.Settlements.ToList();
+				parsed.Direction = contextMessage.Direction;
+				parsed.ThreatType = contextMessage.ThreatType;
+				parsed.Category = contextMessage.Category;
+				parsed.Confidence = Math.Max(parsed.Confidence, contextMessage.Confidence * 0.8);
+				parsed.Flags.Add("ContextFromReply");
+			}
 
             // Контекстный анализ: если сообщение не содержит топонимов, но имеет тип угрозы или статус
             if (parsed.Settlements.Count == 0 && (parsed.ThreatType != "Unknown" || parsed.Status == "Watch" || parsed.Flags.Count > 0))
@@ -92,7 +113,7 @@ namespace Numenius.Core.Processors
                         var prediction = await predictor.GeneratePredictionAsync(incidentWithoutGeo);
                         if (prediction != null)
                         {
-                            await _db.SavePredictionAsync(prediction, predictor.Name);
+                            await _db.SavePredictionAsync(prediction, prediction.PredictorType ?? predictor.Name);
                             _outputCache.AddPrediction(prediction);
                         }
                     }
@@ -118,7 +139,7 @@ namespace Numenius.Core.Processors
                     var prediction = await predictor.GeneratePredictionAsync(incident);
                     if (prediction != null)
                     {
-                        await _db.SavePredictionAsync(prediction, predictor.Name);
+                        await _db.SavePredictionAsync(prediction, prediction.PredictorType ?? predictor.Name);
                         _outputCache.AddPrediction(prediction);
                     }
                 }

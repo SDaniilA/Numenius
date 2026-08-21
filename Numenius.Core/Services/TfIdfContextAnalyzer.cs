@@ -87,7 +87,10 @@ namespace Numenius.Core.Services
 
             return bestScore >= _config.MinScore ? bestMatch : null;
         }
-
+		public ParsedMessage? FindMessageById(string id)
+		{
+			return _history.FirstOrDefault(m => m.SourceMessageId == id);
+		}
         private void UpdateIdf(List<ParsedMessage> docs)
         {
             // Пересчитываем IDF только если прошло достаточно времени или словарь изменился

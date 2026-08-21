@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Numenius.Core.Config;
@@ -8,7 +9,7 @@ using Numenius.Core.Models;
 using Numenius.Core.Queue;
 using Numenius.Core.Utilities;
 using Numenius.Core.Sources;
-using Numenius.Core.Outputs;   // <-- добавлено для использования внешнего ConsoleOutputModule
+using Numenius.Core.Outputs;
 
 namespace Numenius.Core.Orchestrator
 {
@@ -22,9 +23,11 @@ namespace Numenius.Core.Orchestrator
         private IMessageProcessor? _processor;
         private Task? _processingTask;
         private bool _disposed;
+        private readonly string _configFilePath;
 
         public Orchestrator(string configPath = "orchestrator.json")
         {
+            _configFilePath = configPath;
             _config = ConfigLoader.LoadOrchestratorConfig(configPath);
             _queue = new PriorityMessageQueue();
         }
@@ -54,14 +57,15 @@ namespace Numenius.Core.Orchestrator
                 IMessageSource? source = null;
                 try
                 {
+                    string fullConfigPath = ResolveConfigPath(srcCfg.ConfigFile);
                     switch (srcCfg.Type.ToLower())
                     {
                         case "toast":
-                            var toastConfig = ConfigLoader.LoadModuleConfig<ToastSourceConfig>(srcCfg.ConfigFile);
+                            var toastConfig = ConfigLoader.LoadModuleConfig<ToastSourceConfig>(fullConfigPath);
                             source = new ToastNotificationSource(toastConfig);
                             break;
                         case "manual":
-                            var manualConfig = ConfigLoader.LoadModuleConfig<ManualInputConfig>(srcCfg.ConfigFile);
+                            var manualConfig = ConfigLoader.LoadModuleConfig<ManualInputConfig>(fullConfigPath);
                             source = new ManualInputSource(manualConfig);
                             break;
                         default:
@@ -92,19 +96,19 @@ namespace Numenius.Core.Orchestrator
                 IOutputModule? output = null;
                 try
                 {
+                    string fullConfigPath = ResolveConfigPath(outCfg.ConfigFile);
                     switch (outCfg.Type.ToLower())
                     {
                         case "console":
-                            // Используем внешний ConsoleOutputModule из Numenius.Core.Outputs
-                            var consoleConfig = ConfigLoader.LoadModuleConfig<ConsoleOutputConfig>(outCfg.ConfigFile);
+                            var consoleConfig = ConfigLoader.LoadModuleConfig<ConsoleOutputConfig>(fullConfigPath);
                             output = new ConsoleOutputModule(consoleConfig);
                             break;
                         case "tts":
-                            var ttsConfig = ConfigLoader.LoadModuleConfig<TtsOutputConfig>(outCfg.ConfigFile);
+                            var ttsConfig = ConfigLoader.LoadModuleConfig<TtsOutputConfig>(fullConfigPath);
                             output = new TtsOutputModule(ttsConfig);
                             break;
                         case "mqtt":
-                            var mqttConfig = ConfigLoader.LoadModuleConfig<MqttOutputConfig>(outCfg.ConfigFile);
+                            var mqttConfig = ConfigLoader.LoadModuleConfig<MqttOutputConfig>(fullConfigPath);
                             output = new MqttOutputModule(mqttConfig);
                             break;
                         default:
@@ -121,6 +125,18 @@ namespace Numenius.Core.Orchestrator
                 if (output != null)
                     _outputs.Add(output);
             }
+        }
+
+        private string ResolveConfigPath(string? configFile)
+        {
+            if (string.IsNullOrEmpty(configFile))
+                return string.Empty;
+
+            if (Path.IsPathRooted(configFile))
+                return configFile;
+
+            string baseDir = Path.GetDirectoryName(_configFilePath) ?? AppContext.BaseDirectory;
+            return Path.Combine(baseDir, configFile);
         }
 
         public async Task StartAsync()
@@ -170,7 +186,7 @@ namespace Numenius.Core.Orchestrator
                                 catch (Exception ex)
                                 {
                                     Console.WriteLine($"Output error: {ex.Message}");
-                                    Console.WriteLine(ex.StackTrace); // всегда выводим стек для отладки
+                                    Console.WriteLine(ex.StackTrace);
                                 }
                             }
                         }

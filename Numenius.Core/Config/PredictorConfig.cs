@@ -49,8 +49,8 @@ namespace Numenius.Core.Config
         [JsonProperty("Enabled")]
         public bool Enabled { get; set; } = true;
 
-        [JsonProperty("MaxSearchRadiusKm")]
-        public double MaxSearchRadiusKm { get; set; } = 30.0;
+        [JsonProperty("MaxPredictionDistanceKm")]
+		public double MaxPredictionDistanceKm { get; set; } = 50.0;
 
         [JsonProperty("UncertaintyPercent")]
         public double UncertaintyPercent { get; set; } = 20.0;

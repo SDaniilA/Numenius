@@ -16,7 +16,10 @@ namespace Numenius.Core.Models
 
         /// <summary>Отправитель (имя канала/приложения)</summary>
         public string Sender { get; set; } = string.Empty;
-
+		
+		// Идентификатор сообщения, на которое отвечает текущее
+		public string? ReplyToMessageId { get; set; } 
+		
         /// <summary>Исходный текст сообщения</summary>
         public string Text { get; set; } = string.Empty;
 

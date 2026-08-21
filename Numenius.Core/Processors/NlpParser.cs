@@ -10,6 +10,8 @@ namespace Numenius.Core.Processors
     public class NlpParser : INlpParser
     {
         private readonly IGeoService _geo;
+        private readonly ITextNormalizer _normalizer;
+
         private readonly HashSet<string> _threatKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "фпв", "fpv", "хорнет", "дартс", "шарк", "лелека", "разведчик",
@@ -27,9 +29,10 @@ namespace Numenius.Core.Processors
             "режим внимания", "режим внимание", "внимание, режим"
         };
 
-        public NlpParser(IGeoService geo)
+        public NlpParser(IGeoService geo, ITextNormalizer normalizer)
         {
             _geo = geo ?? throw new ArgumentNullException(nameof(geo));
+            _normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         }
 
         public ParsedMessage Parse(string rawText, string sender, string sourceType, DateTime receivedAt)
@@ -128,20 +131,33 @@ namespace Numenius.Core.Processors
         private List<Settlement> ExtractSettlements(string text)
         {
             var result = new List<Settlement>();
-
+            string normalizedText = _normalizer.NormalizeText(text);
             var allNames = _geo.GetAllSettlementNames().ToList();
 
-            // Сортируем названия по длине (от самых длинных к коротким), чтобы сначала искать составные названия
-            foreach (var name in allNames.OrderByDescending(n => n.Length))
+            // Нормализуем названия и создаём словарь соответствия
+            var nameMap = new Dictionary<string, Settlement>();
+            foreach (var name in allNames)
             {
-                var pattern = $@"\b{Regex.Escape(name)}\b";
-                if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase))
+                string normName = _normalizer.Normalize(name);
+                if (!nameMap.ContainsKey(normName))
+                    nameMap[normName] = _geo.FindSettlement(name);
+            }
+
+            // Ищем в нормализованном тексте подстроки нормализованных названий
+            foreach (var normName in nameMap.Keys.OrderByDescending(n => n.Length))
+            {
+                if (normName.Length >= 3 && normalizedText.Contains(normName))
                 {
-                    var s = _geo.FindSettlement(name);
+                    var s = nameMap[normName];
                     if (s != null && !result.Any(x => string.Equals(x.Name, s.Name, StringComparison.OrdinalIgnoreCase)))
                         result.Add(s);
                 }
             }
+
+            // Удаляем административные единицы, если есть более конкретные НП
+            var specific = result.Where(x => !x.Name.Contains("район") && !x.Name.Contains("округ") && !x.Name.Contains("область")).ToList();
+            if (specific.Count > 0)
+                result = specific;
 
             return result;
         }
@@ -153,40 +169,71 @@ namespace Numenius.Core.Processors
             var allNames = _geo.GetAllSettlementNames().ToList();
             if (allNames.Count == 0) return null;
 
-            // Паттерны для поиска направлений
-            var patterns = new[]
-            {
-                @"от\s+(?<from>[^,;]+?)\s+в\s+сторону\s+(?<to>[^,;]+)",
-                @"(?<from>[^,;]+?)\s*[-–—]\s*(?<to>[^,;]+)",
-                @"(?:в\s+направлении|по\s+направлению\s+к|в\s+сторону)\s+(?<to>[^,;]+)"
-            };
+            string normalizedText = _normalizer.NormalizeText(text);
+            Settlement? from = null;
+            List<Settlement> toList = new();
 
-            foreach (var pattern in patterns)
+            // Ищем "от X" – определяем источник
+            var matchFrom = Regex.Match(normalizedText, @"\bот\s+(?<from>[а-яё\- ]+?)(?:\s+(?:в\s+направлении|по\s+направлению|на|к)\s+|$|[,.!?])", RegexOptions.IgnoreCase);
+            if (matchFrom.Success)
             {
-                var match = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
-                if (match.Success)
+                string fromStr = matchFrom.Groups["from"].Value.Trim();
+                from = FindBestSettlement(fromStr, allNames);
+            }
+
+            // Ищем "в направлении Y" или "на Y"
+            var matchTo = Regex.Match(normalizedText, @"(?:в\s+направлении|по\s+направлению|на)\s+(?<to>[а-яё\- ,]+)", RegexOptions.IgnoreCase);
+            if (matchTo.Success)
+            {
+                string toStr = matchTo.Groups["to"].Value.Trim();
+                var parts = Regex.Split(toStr, @"\s*(?:,|и)\s*");
+                foreach (var part in parts)
                 {
-                    string fromStr = match.Groups["from"].Success ? match.Groups["from"].Value.Trim() : "";
-                    string toStr = match.Groups["to"].Success ? match.Groups["to"].Value.Trim() : "";
-
-                    Settlement? from = null;
-                    Settlement? to = null;
-
-                    if (!string.IsNullOrEmpty(fromStr))
-                        from = FindBestSettlement(fromStr, allNames);
-                    if (!string.IsNullOrEmpty(toStr))
-                        to = FindBestSettlement(toStr, allNames);
-
-                    if (from != null && to != null)
-                        return $"{from.Name}->{to.Name}";
-                    else if (from != null && to == null)
-                        return $"{from.Name}->?";
-                    else if (from == null && to != null)
-                        return $"->{to.Name}";
+                    var s = FindBestSettlement(part, allNames);
+                    if (s != null && !toList.Contains(s))
+                        toList.Add(s);
                 }
             }
 
-            // Если не нашли явное направление, используем извлечённые поселения
+            // Если нашли FROM, добавляем все остальные найденные НП как TO (кроме самого FROM)
+            if (from != null)
+            {
+                var foundSettlements = ExtractSettlements(text);
+                foreach (var s in foundSettlements)
+                {
+                    if (!string.Equals(s.Name, from.Name, StringComparison.OrdinalIgnoreCase) && !toList.Contains(s))
+                        toList.Add(s);
+                }
+            }
+
+            // Если нет FROM и TO, пробуем через дефис
+            if (from == null && toList.Count == 0)
+            {
+                var matchDash = Regex.Match(text, @"(?<from>[^\-]+?)\s*[-–—]\s*(?<to>[^\-]+)");
+                if (matchDash.Success)
+                {
+                    var fromS = FindBestSettlement(matchDash.Groups["from"].Value, allNames);
+                    var toS = FindBestSettlement(matchDash.Groups["to"].Value, allNames);
+                    if (fromS != null && toS != null)
+                        return $"{fromS.Name}->{toS.Name}";
+                }
+            }
+
+            // Формируем результат
+            if (from != null && toList.Count > 0)
+            {
+                return $"{from.Name}->{string.Join(",", toList.Select(t => t.Name))}";
+            }
+            else if (from != null && toList.Count == 0)
+            {
+                return null;
+            }
+            else if (from == null && toList.Count > 0)
+            {
+                return $"->{string.Join(",", toList.Select(t => t.Name))}";
+            }
+
+            // Последний вариант – используем извлечённые поселения
             if (settlements.Count >= 2)
             {
                 var first = settlements.First();
@@ -198,29 +245,31 @@ namespace Numenius.Core.Processors
             return null;
         }
 
-        // Вспомогательный метод: ищет самое длинное название поселения, содержащееся в строке
         private Settlement? FindBestSettlement(string rawName, IEnumerable<string> allNames)
         {
-            string normalized = rawName.Trim().ToLowerInvariant();
+            string normalized = _normalizer.Normalize(rawName);
             if (string.IsNullOrEmpty(normalized)) return null;
 
-            // Точное совпадение
-            Settlement? exact = _geo.FindSettlement(rawName);
-            if (exact != null) return exact;
+            // Точное совпадение с нормализованным названием
+            foreach (var name in allNames)
+            {
+                if (_normalizer.Normalize(name) == normalized)
+                    return _geo.FindSettlement(name);
+            }
 
-            // Ищем самое длинное название, которое входит в normalized
+            // Ищем самое длинное название, которое является частью normalized
             Settlement? best = null;
             int bestLength = 0;
             foreach (var name in allNames)
             {
-                string normalizedName = name.ToLowerInvariant();
-                if (normalizedName.Length > bestLength && normalized.Contains(normalizedName))
+                string normName = _normalizer.Normalize(name);
+                if (normName.Length > bestLength && normalized.Contains(normName))
                 {
                     var s = _geo.FindSettlement(name);
                     if (s != null)
                     {
                         best = s;
-                        bestLength = normalizedName.Length;
+                        bestLength = normName.Length;
                     }
                 }
             }

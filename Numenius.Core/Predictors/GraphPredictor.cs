@@ -44,7 +44,9 @@ namespace Numenius.Core.Predictors
 
         public async Task<Prediction?> GeneratePredictionAsync(Incident incident)
         {
+			Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
             if (incident == null || incident.Points == null || incident.Points.Count < 2)
+				Console.WriteLine($"[{Name}] Возврат null: причина (например, недостаточно точек)");
                 return null;
 
             if (incident.Status == IncidentStatus.Terminated || incident.Status == IncidentStatus.Expired)
@@ -57,6 +59,7 @@ namespace Numenius.Core.Predictors
             }
 
             if (_graph == null || _graph.Nodes.Count == 0)
+				Console.WriteLine($"[{Name}] Возврат null: причина (_graph == null || _graph.Nodes.Count == 0)");
                 return null;
 
             var extractor = new FeatureExtractor();
@@ -182,10 +185,11 @@ namespace Numenius.Core.Predictors
                 AttackWindowStart = windowStart,
                 AttackWindowEnd = windowEnd,
                 Confidence = confidence,
-                Notes = $"Графовый прогноз: {bestEdges.Count} рёбер, скор={bestEdges.First().Probability:F3}, переходов={bestEdges.First().TransitionCount}"
+                Notes = $"Графовый прогноз: {bestEdges.Count} рёбер, скор={bestEdges.First().Probability:F3}, переходов={bestEdges.First().TransitionCount}",
+				PredictorType = Name,   // "Graph"
             };
 
-            GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements));
+            GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements), Name);
             return prediction;
         }
 

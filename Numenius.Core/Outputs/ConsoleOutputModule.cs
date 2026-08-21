@@ -28,7 +28,8 @@ namespace Numenius.Core.Outputs
             try
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"\n📨 [{message.ReceivedAt:HH:mm:ss}] {message.Sender ?? "Unknown"}");
+                // Используем ToLocalTime() для отображения локального времени
+                Console.WriteLine($"\n📨 [{message.ReceivedAt.ToLocalTime():HH:mm:ss}] {message.Sender ?? "Unknown"}");
                 Console.ResetColor();
                 Console.WriteLine($"   Тип: {message.ThreatType ?? "Unknown"} | Категория: {message.Category}");
                 Console.WriteLine($"   Текст: {message.CleanedText ?? ""}");
@@ -60,16 +61,17 @@ namespace Numenius.Core.Outputs
             try
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"\n🔮 ПРОГНОЗ [{prediction.CreatedAt:HH:mm:ss}]");
+                // Используем ToLocalTime() для отображения локального времени
+                Console.WriteLine($"\n🔮 ПРОГНОЗ [{prediction.CreatedAt.ToLocalTime():HH:mm:ss}]");
                 Console.ResetColor();
                 Console.WriteLine($"   Тип: {prediction.ThreatType ?? "Unknown"}");
                 Console.WriteLine($"   Зона: {string.Join(", ", prediction.AffectedSettlements ?? new System.Collections.Generic.List<string>())}");
                 
                 string startStr = prediction.AttackWindowStart.HasValue 
-                    ? prediction.AttackWindowStart.Value.ToString("HH:mm") 
+                    ? prediction.AttackWindowStart.Value.ToLocalTime().ToString("HH:mm") 
                     : "??:??";
                 string endStr = prediction.AttackWindowEnd.HasValue 
-                    ? prediction.AttackWindowEnd.Value.ToString("HH:mm") 
+                    ? prediction.AttackWindowEnd.Value.ToLocalTime().ToString("HH:mm") 
                     : "??:??";
                 Console.WriteLine($"   Окно: {startStr} – {endStr}");
                 

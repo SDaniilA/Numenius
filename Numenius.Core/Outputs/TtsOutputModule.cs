@@ -76,10 +76,10 @@ namespace Numenius.Core.Outputs
             try
             {
                 string startStr = prediction.AttackWindowStart.HasValue 
-                    ? prediction.AttackWindowStart.Value.ToString("HH:mm") 
+                    ? prediction.AttackWindowStart.Value.ToLocalTime().ToString("HH:mm") 
                     : "??:??";
                 string endStr = prediction.AttackWindowEnd.HasValue 
-                    ? prediction.AttackWindowEnd.Value.ToString("HH:mm") 
+                    ? prediction.AttackWindowEnd.Value.ToLocalTime().ToString("HH:mm") 
                     : "??:??";
                 string text = $"Прогноз: {prediction.ThreatType ?? "Unknown"}. Зона: {string.Join(", ", prediction.AffectedSettlements ?? new List<string>())}. Окно: {startStr} – {endStr}. Уверенность {prediction.Confidence:P0}.";
                 _synthesizer.SpeakAsync(text);
@@ -98,7 +98,7 @@ namespace Numenius.Core.Outputs
             var parts = new List<string>();
 
             if (_config.SpeakTime)
-                parts.Add(SpeechUtilities.FormatTimeForSpeech(msg.ReceivedAt, "hours_minutes"));
+                parts.Add(SpeechUtilities.FormatTimeForSpeech(msg.ReceivedAt.ToLocalTime(), "hours_minutes"));
 
             if (_config.SpeakSender && !string.IsNullOrEmpty(msg.Sender))
                 parts.Add(msg.Sender);
