@@ -131,7 +131,8 @@ namespace Numenius.Core.Processors
 
             var allNames = _geo.GetAllSettlementNames().ToList();
 
-            foreach (var name in allNames)
+            // Сортируем названия по длине (от самых длинных к коротким), чтобы сначала искать составные названия
+            foreach (var name in allNames.OrderByDescending(n => n.Length))
             {
                 var pattern = $@"\b{Regex.Escape(name)}\b";
                 if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase))
@@ -142,58 +143,50 @@ namespace Numenius.Core.Processors
                 }
             }
 
-            if (result.Count == 0)
-            {
-                var words = Regex.Split(text, @"[^\w\-]", RegexOptions.IgnoreCase)
-                                 .Where(w => w.Length >= 3)
-                                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                                 .ToList();
-
-                foreach (var word in words)
-                {
-                    var exact = allNames.FirstOrDefault(n => string.Equals(n, word, StringComparison.OrdinalIgnoreCase));
-                    if (exact != null)
-                    {
-                        var s = _geo.FindSettlement(exact);
-                        if (s != null && !result.Any(x => string.Equals(x.Name, s.Name, StringComparison.OrdinalIgnoreCase)))
-                            result.Add(s);
-                    }
-                }
-            }
-
             return result;
         }
 
         private string? ExtractDirection(string text, List<Settlement> settlements)
         {
-            string lowerText = text.ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(text)) return null;
 
-            var match = Regex.Match(lowerText, @"от\s+([^\s,]+)\s+в\s+сторону\s+([^\s,]+)");
-            if (match.Success)
+            var allNames = _geo.GetAllSettlementNames().ToList();
+            if (allNames.Count == 0) return null;
+
+            // Паттерны для поиска направлений
+            var patterns = new[]
             {
-                var from = _geo.FindSettlement(match.Groups[1].Value);
-                var to = _geo.FindSettlement(match.Groups[2].Value);
-                if (from != null && to != null)
-                    return $"{from.Name}->{to.Name}";
+                @"от\s+(?<from>[^,;]+?)\s+в\s+сторону\s+(?<to>[^,;]+)",
+                @"(?<from>[^,;]+?)\s*[-–—]\s*(?<to>[^,;]+)",
+                @"(?:в\s+направлении|по\s+направлению\s+к|в\s+сторону)\s+(?<to>[^,;]+)"
+            };
+
+            foreach (var pattern in patterns)
+            {
+                var match = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    string fromStr = match.Groups["from"].Success ? match.Groups["from"].Value.Trim() : "";
+                    string toStr = match.Groups["to"].Success ? match.Groups["to"].Value.Trim() : "";
+
+                    Settlement? from = null;
+                    Settlement? to = null;
+
+                    if (!string.IsNullOrEmpty(fromStr))
+                        from = FindBestSettlement(fromStr, allNames);
+                    if (!string.IsNullOrEmpty(toStr))
+                        to = FindBestSettlement(toStr, allNames);
+
+                    if (from != null && to != null)
+                        return $"{from.Name}->{to.Name}";
+                    else if (from != null && to == null)
+                        return $"{from.Name}->?";
+                    else if (from == null && to != null)
+                        return $"->{to.Name}";
+                }
             }
 
-            match = Regex.Match(lowerText, @"([^\s,]+)\s*[-–]\s*([^\s,]+)");
-            if (match.Success)
-            {
-                var a = _geo.FindSettlement(match.Groups[1].Value);
-                var b = _geo.FindSettlement(match.Groups[2].Value);
-                if (a != null && b != null)
-                    return $"{a.Name}->{b.Name}";
-            }
-
-            match = Regex.Match(lowerText, @"(?:в\s+направлении|по\s+направлению\s+к|в\s+сторону)\s+([^\s,]+)");
-            if (match.Success)
-            {
-                var target = _geo.FindSettlement(match.Groups[1].Value);
-                if (target != null)
-                    return $"->{target.Name}";
-            }
-
+            // Если не нашли явное направление, используем извлечённые поселения
             if (settlements.Count >= 2)
             {
                 var first = settlements.First();
@@ -203,6 +196,35 @@ namespace Numenius.Core.Processors
             }
 
             return null;
+        }
+
+        // Вспомогательный метод: ищет самое длинное название поселения, содержащееся в строке
+        private Settlement? FindBestSettlement(string rawName, IEnumerable<string> allNames)
+        {
+            string normalized = rawName.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(normalized)) return null;
+
+            // Точное совпадение
+            Settlement? exact = _geo.FindSettlement(rawName);
+            if (exact != null) return exact;
+
+            // Ищем самое длинное название, которое входит в normalized
+            Settlement? best = null;
+            int bestLength = 0;
+            foreach (var name in allNames)
+            {
+                string normalizedName = name.ToLowerInvariant();
+                if (normalizedName.Length > bestLength && normalized.Contains(normalizedName))
+                {
+                    var s = _geo.FindSettlement(name);
+                    if (s != null)
+                    {
+                        best = s;
+                        bestLength = normalizedName.Length;
+                    }
+                }
+            }
+            return best;
         }
 
         private void DetectStatusAndFlags(string lowerText, ParsedMessage parsed)
