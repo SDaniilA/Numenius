@@ -13,7 +13,7 @@ namespace Numenius.Core.Services
         private readonly FeatureExtractor _featureExtractor = new();
         private readonly double _defaultDistanceThreshold = 50.0; // км
         private readonly double _fpvDistanceThreshold = 10.0; // км
-        private readonly double _maxAgeDays = 30.0; // для затухания
+        //private readonly double _maxAgeDays = 30.0; // для затухания
 
         public GraphBuilder(IGeoService geo)
         {

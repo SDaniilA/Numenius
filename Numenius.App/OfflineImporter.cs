@@ -222,7 +222,7 @@ namespace Numenius.App
             public string From { get; set; } = string.Empty;
 
             [JsonProperty("text")]
-            public object Text { get; set; }
+            public object? Text { get; set; }
         }
     }
 }

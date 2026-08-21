@@ -10,11 +10,17 @@
     "Enabled": true,
     "MaxDaysHistory": 30
   },
+  "Trajectory": {
+    "Enabled": true,
+    "MaxSearchRadiusKm": 30.0,
+    "UncertaintyPercent": 20.0
+  },
   "Ensemble": {
     "Enabled": false,
     "Weights": {
-      "Graph": 0.5,
-      "Statistical": 0.5
+      "Graph": 0.4,
+      "Statistical": 0.3,
+      "Trajectory": 0.3
     }
   }
 }

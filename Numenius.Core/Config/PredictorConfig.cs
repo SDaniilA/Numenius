@@ -16,6 +16,9 @@ namespace Numenius.Core.Config
 
         [JsonProperty("Ensemble")]
         public EnsemblePredictorConfig Ensemble { get; set; } = new();
+		
+		[JsonProperty("Trajectory")]
+		public TrajectoryPredictorConfig Trajectory { get; set; } = new();
     }
 
     public class GraphPredictorConfig
@@ -41,7 +44,17 @@ namespace Numenius.Core.Config
         [JsonProperty("MaxDaysHistory")]
         public int MaxDaysHistory { get; set; } = 30;
     }
+	public class TrajectoryPredictorConfig
+	{
+		[JsonProperty("Enabled")]
+		public bool Enabled { get; set; } = true;
 
+		[JsonProperty("MaxSearchRadiusKm")]
+		public double MaxSearchRadiusKm { get; set; } = 30.0;
+
+		[JsonProperty("UncertaintyPercent")]
+		public double UncertaintyPercent { get; set; } = 20.0;
+	}
     public class EnsemblePredictorConfig
     {
         [JsonProperty("Enabled")]

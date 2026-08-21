@@ -91,7 +91,7 @@ namespace Numenius.App
             }
             else if (predictorConfig.Statistical.Enabled)
             {
-                predictor = new StatisticalPredictor(db, heuristics, predictorConfig.Statistical);
+                predictor = new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical);
             }
             else
             {
@@ -192,7 +192,7 @@ namespace Numenius.App
             }
             if (predictorConfig.Statistical.Enabled)
             {
-                var sp = new StatisticalPredictor(db, heuristics, predictorConfig.Statistical);
+                var sp = new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical);
                 predictors.Add(sp);
                 Console.WriteLine("📊 Статистический предиктор активирован.");
             }
