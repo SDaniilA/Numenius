@@ -1,7 +1,7 @@
 {
   "CheckIntervalSeconds": 2,
   "AllowedApps": [ "Telegram" ],
-  "DeleteMode": "on_exit",
+  "DeleteMode": "immediate",
   "MaxProcessedIds": 10000,
   "DebugMode": false,
   "SaveProcessedIds": true,
