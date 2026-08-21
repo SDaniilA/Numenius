@@ -1,0 +1,15 @@
+{
+  "ZoneWidthKm": 5.0,
+  "StrikeDroneLifetimeHours": 2.0,
+  "ReconDroneLifetimeHours": 24.0,
+  "WatchLifetimeHours": 6.0,
+  "ConfidenceDecayPerHour": 0.05,
+  "WatchConfidenceBoost": 0.2,
+  "AttackWindowMinutes": 90,
+  "ReconAttackWindowHours": 5.0,
+  "MinConfidenceToAlert": 0.6,
+  "FpvLifetimeMinutes": 30,
+  "DefaultLifetimeHours": 2.0,
+  "TimeZoneOffsetHours": 3.0,
+  "GeocodingMode": "LocalOnly"
+}

@@ -1,0 +1,33 @@
+{
+  "Sources": [
+    {
+      "Type": "Toast",
+      "Enabled": true,
+      "ConfigFile": "appsettings/toast_source.json"
+    },
+    {
+      "Type": "Manual",
+      "Enabled": true,
+      "ConfigFile": "appsettings/manual_input.json"
+    }
+  ],
+  "Outputs": [
+    {
+      "Type": "Console",
+      "Enabled": false,
+      "ConfigFile": "appsettings/console_output.json"
+    },
+    {
+      "Type": "Tts",
+      "Enabled": false,
+      "ConfigFile": "appsettings/tts_output.json"
+    },
+    {
+      "Type": "Mqtt",
+      "Enabled": false,
+      "ConfigFile": "appsettings/mqtt_output.json"
+    }
+  ],
+  "QueueMaxSize": 500,
+  "ShutdownTimeoutSeconds": 10
+}

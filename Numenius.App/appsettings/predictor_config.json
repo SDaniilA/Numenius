@@ -1,0 +1,20 @@
+{
+  "ActivePredictor": "Graph",
+  "Graph": {
+    "Enabled": true,
+    "MinOccurrencesForEdge": 3,
+    "MaxNodeAgeDays": 30,
+    "ConfidenceBoostPerEdge": 0.05
+  },
+  "Statistical": {
+    "Enabled": true,
+    "MaxDaysHistory": 30
+  },
+  "Ensemble": {
+    "Enabled": false,
+    "Weights": {
+      "Graph": 0.5,
+      "Statistical": 0.5
+    }
+  }
+}
