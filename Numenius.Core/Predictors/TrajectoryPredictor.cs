@@ -97,6 +97,9 @@ namespace Numenius.Core.Predictors
             };
 
             GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements));
+			// DEBUG
+			Console.WriteLine($"   [Trajectory] Уверенность: {prediction.Confidence:P0}, зоны: {string.Join(", ", prediction.AffectedSettlements)}");
+			// DEBUG
             return prediction;
         }
 

@@ -14,12 +14,12 @@
   "Outputs": [
     {
       "Type": "Console",
-      "Enabled": false,
+      "Enabled": true,
       "ConfigFile": "appsettings/console_output.json"
     },
     {
       "Type": "Tts",
-      "Enabled": false,
+      "Enabled": true,
       "ConfigFile": "appsettings/tts_output.json"
     },
     {

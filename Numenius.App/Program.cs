@@ -211,7 +211,7 @@ namespace Numenius.App
             var scenarioManager = new ScenarioManager(db, geo, heuristics);
             var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig);
 
-            var consoleOutput = new ConsoleOutputModule();
+            /* var consoleOutput = new ConsoleOutputModule();
             string ttsConfigPath = Path.Combine(appSettingsPath, "tts_output.json");
             if (!File.Exists(ttsConfigPath))
             {
@@ -220,15 +220,15 @@ namespace Numenius.App
             }
             var ttsConfig = ConfigLoader.LoadModuleConfig<TtsOutputConfig>(ttsConfigPath);
             var ttsOutput = new TtsOutputModule(ttsConfig);
-            await ttsOutput.InitializeAsync();
+            await ttsOutput.InitializeAsync(); */
 
             // НЕ ПОДПИСЫВАЕМСЯ НА СОБЫТИЯ outputCache, чтобы избежать дублирования
             // Вся передача сообщений идёт через Orchestrator
 
             var orchestrator = new Orchestrator(orchestratorPath);
             orchestrator.RegisterProcessor(processor);
-            orchestrator.RegisterOutput(consoleOutput);
-            orchestrator.RegisterOutput(ttsOutput);
+            /* orchestrator.RegisterOutput(consoleOutput);
+            orchestrator.RegisterOutput(ttsOutput); */
 
             await orchestrator.StartAsync();
 			// ===== ФОНОВАЯ ЗАДАЧА: ЗАКРЫТИЕ ПО СРОКУ =====
