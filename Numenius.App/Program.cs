@@ -196,6 +196,13 @@ namespace Numenius.App
                 predictors.Add(sp);
                 Console.WriteLine("📊 Статистический предиктор активирован.");
             }
+			if (predictorConfig.Trajectory.Enabled)
+			{
+				var tp = new TrajectoryPredictor(geo, db, heuristics, predictorConfig.Trajectory);
+				predictors.Add(tp);
+				Console.WriteLine("📈 Траекторный предиктор активирован.");
+			}
+			
             if (predictors.Count == 0)
                 throw new Exception("Нет активных предикторов.");
 

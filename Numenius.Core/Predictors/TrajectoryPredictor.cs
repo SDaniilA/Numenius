@@ -279,9 +279,9 @@ namespace Numenius.Core.Predictors
     /// <summary>
     /// Конфигурация для TrajectoryPredictor.
     /// </summary>
-    public class TrajectoryPredictorConfig
+    /* public class TrajectoryPredictorConfig
     {
         public double MaxSearchRadiusKm { get; set; } = 30.0; // радиус поиска ближайшего НП
         public double UncertaintyPercent { get; set; } = 20.0; // неопределённость окна (% от времени)
-    }
+    } */
 }
