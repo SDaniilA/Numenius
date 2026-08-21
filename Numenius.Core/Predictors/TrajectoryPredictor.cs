@@ -10,9 +10,6 @@ using Numenius.Core.Utilities;
 
 namespace Numenius.Core.Predictors
 {
-    /// <summary>
-    /// Предиктор на основе экстраполяции траектории движения по последним точкам.
-    /// </summary>
     public class TrajectoryPredictor : IPredictor
     {
         public string Name => "Trajectory";
@@ -32,23 +29,32 @@ namespace Numenius.Core.Predictors
 
         public async Task<Prediction?> GeneratePredictionAsync(Incident incident)
         {
-			Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
+            Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
             if (incident == null || incident.Points == null || incident.Points.Count < 2)
-				Console.WriteLine($"[{Name}] Возврат null: причина (incident == null || incident.Points == null || incident.Points.Count < 2)");
+            {
+                Console.WriteLine($"[{Name}] Возврат null: недостаточно точек");
                 return null;
+            }
 
             if (incident.Status == IncidentStatus.Terminated || incident.Status == IncidentStatus.Expired)
+            {
+                Console.WriteLine($"[{Name}] Возврат null: инцидент завершён (Terminated/Expired)");
                 return null;
+            }
 
             var points = incident.Points.OrderBy(p => p.Time).TakeLast(Math.Min(5, incident.Points.Count)).ToList();
             if (points.Count < 2)
-				Console.WriteLine($"[{Name}] Возврат null: причина (points.Count < 2)");
+            {
+                Console.WriteLine($"[{Name}] Возврат null: точек меньше 2 после сортировки");
                 return null;
+            }
 
             var (speedKmh, azimuthDeg) = CalculateMotion(points);
             if (speedKmh < 0.1)
-				Console.WriteLine($"[{Name}] Возврат null: причина (speedKmh < 0.1)");
+            {
+                Console.WriteLine($"[{Name}] Возврат null: скорость слишком мала ({speedKmh:F2} км/ч)");
                 return null;
+            }
 
             double windowMinutes = _heuristics.AttackWindowMinutes;
             double hours = windowMinutes / 60.0;
@@ -64,7 +70,6 @@ namespace Numenius.Core.Predictors
             var lastPoint = points.Last();
             var predictedPoint = ProjectPoint(lastPoint.Lat, lastPoint.Lon, azimuthDeg, distanceKm);
 
-            // Ищем ближайший НП (без ограничения радиуса)
             var nearestSettlement = FindNearestSettlement(predictedPoint.Lat, predictedPoint.Lon);
 
             DateTime arrivalTime = lastPoint.Time.AddHours(distanceKm / speedKmh);
@@ -186,7 +191,6 @@ namespace Numenius.Core.Predictors
         private double CalculateConfidence(List<IncidentPoint> points, double speedKmh, double distanceKm, Settlement? nearest)
         {
             double confidence = 0.5;
-
             double pointFactor = Math.Min(1.0, points.Count / 5.0);
             confidence += pointFactor * 0.2;
 

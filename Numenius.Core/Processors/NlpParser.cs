@@ -13,11 +13,13 @@ namespace Numenius.Core.Processors
         private readonly ITextNormalizer _normalizer;
 
         private readonly HashSet<string> _threatKeywords = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "фпв", "fpv", "хорнет", "дартс", "шарк", "лелека", "разведчик",
-            "ударный", "ракет", "рсзо", "уаб", "авиация", "пуск", "бпла",
-            "шторм", "stormshadow", "scalp", "баба яга", "лютый", "фурия"
-        };
+		{
+			"фпв", "fpv", "хорнет", "дартс", "шарк", "лелека", "разведчик",
+			"ударный", "ракет", "рсзо", "уаб", "авиация", "пуск", "бпла",
+			"шторм", "stormshadow", "scalp", "баба яга", "лютый", "фурия",
+			"обстрел", "артобстрел", "прилет", "прилетел", "взрыв", "взрывы",
+			"ракетный удар", "ракетная опасность", "обстрел"
+		};
 
         private readonly HashSet<string> _statusKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -110,6 +112,7 @@ namespace Numenius.Core.Processors
                         "ударный" => "StrikeDrone",
                         "ракет" or "рсзо" or "уаб" or "пуск" or "шторм" or "stormshadow" or "scalp" => "Rocket",
                         "бпла" => "Drone",
+						"обстрел" or "артобстрел" or "прилет" or "взрыв" or "ракетный удар" or "ракетная опасность" => "Rocket",
                         _ => parsed.ThreatType
                     };
                     break;

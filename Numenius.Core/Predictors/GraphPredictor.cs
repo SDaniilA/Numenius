@@ -44,32 +44,37 @@ namespace Numenius.Core.Predictors
 
         public async Task<Prediction?> GeneratePredictionAsync(Incident incident)
         {
-			Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
+            Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
             if (incident == null || incident.Points == null || incident.Points.Count < 2)
-				Console.WriteLine($"[{Name}] Возврат null: причина (например, недостаточно точек)");
+            {
+                Console.WriteLine($"[{Name}] Возврат null: недостаточно точек");
                 return null;
+            }
 
             if (incident.Status == IncidentStatus.Terminated || incident.Status == IncidentStatus.Expired)
+            {
+                Console.WriteLine($"[{Name}] Возврат null: инцидент завершён (Terminated/Expired)");
                 return null;
+            }
 
-            // Обновляем граф, если устарел
             if (_graph == null || (DateTime.UtcNow - _lastGraphUpdate).TotalHours > 1)
             {
                 await UpdateGraphAsync();
             }
 
             if (_graph == null || _graph.Nodes.Count == 0)
-				Console.WriteLine($"[{Name}] Возврат null: причина (_graph == null || _graph.Nodes.Count == 0)");
+            {
+                Console.WriteLine($"[{Name}] Возврат null: граф пуст");
                 return null;
+            }
 
             var extractor = new FeatureExtractor();
             var features = extractor.ExtractFeatures(incident);
 
-            // Формируем ключ текущего узла
             string regionKey = GetRegionKey(incident.Points);
             string currentKey = $"{features.ThreatType}|{features.TimeOfDay}|{features.Season}|{features.DayOfWeek}|{features.HasRecon}|{GetSpeedBin(features.AverageSpeed)}|{regionKey}";
 
-            var currentNode = _graph.Nodes.FirstOrDefault(n => 
+            var currentNode = _graph.Nodes.FirstOrDefault(n =>
                 n.ThreatType == features.ThreatType &&
                 n.TimeOfDay == features.TimeOfDay &&
                 n.Season == features.Season &&
@@ -80,49 +85,49 @@ namespace Numenius.Core.Predictors
             );
 
             if (currentNode == null)
+            {
+                Console.WriteLine($"[{Name}] Возврат null: нет узла в графе для ключа '{currentKey}'");
                 return null;
+            }
 
-            // Сортируем рёбра по вероятности с учётом временного затухания
             var now = DateTime.UtcNow;
             var candidateEdges = currentNode.Edges
                 .Where(e => e.Probability > 0 && e.TransitionCount >= _config.MinOccurrencesForEdge)
                 .Select(e => new
                 {
                     Edge = e,
-                    // Фактор затухания: экспоненциальный, чем старше ребро, тем меньше вес
-                    Weight = e.Probability * Math.Exp(-(now - e.LastUpdated).TotalDays / 7.0) // затухание за 7 дней
+                    Weight = e.Probability * Math.Exp(-(now - e.LastUpdated).TotalDays / 7.0)
                 })
                 .OrderByDescending(x => x.Weight)
                 .Take(3)
                 .ToList();
 
             if (candidateEdges.Count == 0)
+            {
+                Console.WriteLine($"[{Name}] Возврат null: нет рёбер с переходов >= {_config.MinOccurrencesForEdge}");
                 return null;
+            }
 
             var bestEdges = candidateEdges.Select(x => x.Edge).ToList();
 
-            // Строим список затронутых поселений (целевые регионы)
             var affectedSettlements = new List<string>();
             foreach (var edge in bestEdges)
             {
                 var targetNode = _graph.Nodes.FirstOrDefault(n => n.Id == edge.TargetNodeId);
                 if (targetNode != null && !string.IsNullOrEmpty(targetNode.Region))
                 {
-                    // Разбиваем регион на отдельные названия, если это кластер, берём название кластера
                     affectedSettlements.Add(targetNode.Region);
                 }
             }
             if (affectedSettlements.Count == 0)
-                affectedSettlements.Add(regionKey); // если не нашли, берём текущий
+                affectedSettlements.Add(regionKey);
 
-            // Определяем окно атаки: используем среднюю задержку и дисперсию
             DateTime windowStart, windowEnd;
             if (bestEdges.Count > 0)
             {
                 var mainEdge = bestEdges.First();
                 double meanDelay = mainEdge.AverageDelayHours;
-                double stdDev = Math.Max(mainEdge.StdDevDelayHours, 0.5); // минимальное отклонение 0.5 ч
-                // Окно: средняя задержка ± 1 std dev, но не меньше 15 минут
+                double stdDev = Math.Max(mainEdge.StdDevDelayHours, 0.5);
                 double offsetStart = Math.Max(meanDelay - stdDev, 0.25);
                 double offsetEnd = meanDelay + stdDev;
                 windowStart = incident.LastSeen.AddHours(offsetStart);
@@ -130,23 +135,19 @@ namespace Numenius.Core.Predictors
             }
             else
             {
-                // Дефолтное окно
                 windowStart = incident.LastSeen.AddMinutes(15);
                 windowEnd = incident.LastSeen.AddMinutes(_heuristics.AttackWindowMinutes);
             }
 
-            // Вычисляем уверенность: средняя вероятность рёбер + фактор источника и количества точек
             double avgProb = bestEdges.Average(e => e.Probability);
-            double sourceFactor = currentNode.Weight; // средний вес источника узла
+            double sourceFactor = currentNode.Weight;
             double pointFactor = Math.Min(1.0, incident.Points.Count / 5.0);
             double confidence = avgProb * 0.5 + sourceFactor * 0.3 + pointFactor * 0.2;
             confidence = Math.Clamp(confidence, 0.0, 1.0);
 
-            // Строим геозону (полигон) на основе затронутых поселений
             string zoneGeoJson = "";
             if (affectedSettlements.Count > 0)
             {
-                // Получаем координаты поселений
                 var settlementPoints = new List<IncidentPoint>();
                 foreach (var name in affectedSettlements)
                 {
@@ -164,12 +165,11 @@ namespace Numenius.Core.Predictors
                 }
                 if (settlementPoints.Count > 0)
                 {
-                    // Радиус зоны зависит от скорости и времени окна
-                    double radiusKm = 5.0; // базовый
+                    double radiusKm = 5.0;
                     if (features.AverageSpeed > 0)
                     {
                         double hoursUntil = (windowEnd - incident.LastSeen).TotalHours;
-                        radiusKm = features.AverageSpeed * hoursUntil * 0.5; // примерно половина пути
+                        radiusKm = features.AverageSpeed * hoursUntil * 0.5;
                         radiusKm = Math.Clamp(radiusKm, 2.0, 50.0);
                     }
                     zoneGeoJson = _geo.BuildZoneGeoJson(settlementPoints, radiusKm);
@@ -186,7 +186,7 @@ namespace Numenius.Core.Predictors
                 AttackWindowEnd = windowEnd,
                 Confidence = confidence,
                 Notes = $"Графовый прогноз: {bestEdges.Count} рёбер, скор={bestEdges.First().Probability:F3}, переходов={bestEdges.First().TransitionCount}",
-				PredictorType = Name,   // "Graph"
+                PredictorType = Name
             };
 
             GraphLogger.LogPrediction(incident.Id, incident.ThreatType, prediction.Confidence, string.Join(", ", prediction.AffectedSettlements), Name);
