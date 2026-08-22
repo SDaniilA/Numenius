@@ -70,44 +70,63 @@ namespace Numenius.App
             if (!Directory.Exists(appSettingsPath))
                 Directory.CreateDirectory(appSettingsPath);
 
+            // Загрузка конфигураций
             var heuristics = ConfigLoader.LoadModuleConfig<HeuristicsConfig>(
                 Path.Combine(appSettingsPath, "heuristics_config.json"));
+            var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
+                Path.Combine(appSettingsPath, "predictor_config.json"));
+            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(
+                Path.Combine(appSettingsPath, "context_analyzer.json"));
+            var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(
+                Path.Combine(appSettingsPath, "threat_characteristics.json"));
 
+            // Инициализация БД и сервисов
             var db = new DatabaseService(Path.Combine(baseDir, "numenius.db"));
             await db.InitializeAsync();
 
             var geo = new GeoService(db, Path.Combine(appSettingsPath, "settlements.json"));
-            var zoneService = new ZoneService(geo);
-            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService);
+
+            // Загрузка населённых пунктов
+            var settlements = (await db.GetAllSettlementsAsync()).ToList();
+            if (!settlements.Any())
+            {
+                string settlementsPath = Path.Combine(appSettingsPath, "settlements.json");
+                if (File.Exists(settlementsPath))
+                {
+                    var json = File.ReadAllText(settlementsPath);
+                    var list = JsonConvert.DeserializeObject<List<Settlement>>(json);
+                    if (list != null)
+                    {
+                        foreach (var s in list)
+                            await db.SaveSettlementAsync(s);
+                        settlements = list;
+                        Console.WriteLine($"✅ Загружено {settlements.Count} НП из JSON в БД.");
+                    }
+                }
+            }
+
+            // Создание графа и зон
+            var settlementGraph = new SettlementGraph(geo, settlements);
+            var zoneService = new ZoneService(settlementGraph, threatCharacteristics);
+
+            // Создание менеджера сценариев
+            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService, threatCharacteristics);
 
             var normalizer = new PorterStemmerNormalizer();
             var nlp = new NlpParser(geo, normalizer);
             var outputCache = new OutputCache();
-            var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
-                Path.Combine(appSettingsPath, "predictor_config.json"));
 
             // Контекстный анализатор
-            string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
-            if (!File.Exists(contextConfigPath))
-            {
-                var defaultContext = new ContextAnalyzerConfig();
-                ConfigLoader.SaveConfig(defaultContext, contextConfigPath);
-            }
-            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
             IContextAnalyzer contextAnalyzer = new SimpleContextAnalyzer(contextConfig);
             Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
 
-            // Загрузка ТТХ
-            string threatCharacteristicsPath = Path.Combine(appSettingsPath, "threat_characteristics.json");
-            var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(threatCharacteristicsPath);
-
+            // Создание предикторов
             var predictors = new List<IPredictor>();
             if (predictorConfig.Bayesian.Enabled)
             {
                 predictors.Add(new BayesianPredictor(geo, db, zoneService, heuristics, threatCharacteristics));
                 Console.WriteLine("🧠 Байесовский предиктор активирован.");
             }
-            // Другие предикторы можно отключить, но оставим по желанию
             if (predictorConfig.Graph.Enabled)
             {
                 var gp = new GraphPredictor(geo, db, heuristics, predictorConfig.Graph);
@@ -149,6 +168,7 @@ namespace Numenius.App
             System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, sslPolicyErrors) => true;
 
+            // Загрузка конфигураций
             string orchestratorPath = Path.Combine(appSettingsPath, "orchestrator.json");
             if (!File.Exists(orchestratorPath))
             {
@@ -158,24 +178,16 @@ namespace Numenius.App
                 ConfigLoader.SaveConfig(defaultOrch, orchestratorPath);
             }
 
-            string heuristicsPath = Path.Combine(appSettingsPath, "heuristics_config.json");
-            if (!File.Exists(heuristicsPath))
-            {
-                var defaultHeur = new HeuristicsConfig();
-                ConfigLoader.SaveConfig(defaultHeur, heuristicsPath);
-            }
-            var heuristics = ConfigLoader.LoadModuleConfig<HeuristicsConfig>(heuristicsPath);
-
-            string predictorPath = Path.Combine(appSettingsPath, "predictor_config.json");
-            if (!File.Exists(predictorPath))
-            {
-                var defaultPred = new PredictorConfig();
-                ConfigLoader.SaveConfig(defaultPred, predictorPath);
-            }
-            var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(predictorPath);
-
-            string overridesPath = Path.Combine(appSettingsPath, "source_overrides.json");
-            var overrides = ConfigLoader.LoadModuleConfig<SourceOverridesConfig>(overridesPath);
+            var heuristics = ConfigLoader.LoadModuleConfig<HeuristicsConfig>(
+                Path.Combine(appSettingsPath, "heuristics_config.json"));
+            var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
+                Path.Combine(appSettingsPath, "predictor_config.json"));
+            var overrides = ConfigLoader.LoadModuleConfig<SourceOverridesConfig>(
+                Path.Combine(appSettingsPath, "source_overrides.json"));
+            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(
+                Path.Combine(appSettingsPath, "context_analyzer.json"));
+            var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(
+                Path.Combine(appSettingsPath, "threat_characteristics.json"));
 
             var filterConfig = new FilterConfig
             {
@@ -183,11 +195,13 @@ namespace Numenius.App
                 BlacklistedSenders = overrides.BlacklistedSenders
             };
 
+            // Инициализация БД
             var db = new DatabaseService(Path.Combine(baseDir, "numenius.db"));
             await db.InitializeAsync();
             await db.CloseOldIncidentsAsync();
 
-            var settlements = await db.GetAllSettlementsAsync();
+            // Загрузка населённых пунктов
+            var settlements = (await db.GetAllSettlementsAsync()).ToList();
             if (!settlements.Any())
             {
                 string settlementsPath = Path.Combine(appSettingsPath, "settlements.json");
@@ -199,25 +213,25 @@ namespace Numenius.App
                     {
                         foreach (var s in list)
                             await db.SaveSettlementAsync(s);
-                        Console.WriteLine($"✅ Загружено {list.Count} НП из JSON в БД.");
+                        settlements = list;
+                        Console.WriteLine($"✅ Загружено {settlements.Count} НП из JSON в БД.");
                     }
                 }
             }
 
             var geo = new GeoService(db, Path.Combine(appSettingsPath, "settlements.json"));
-            var zoneService = new ZoneService(geo);
-            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService);
+            var settlementGraph = new SettlementGraph(geo, settlements);
+            var zoneService = new ZoneService(settlementGraph, threatCharacteristics);
 
+            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService, threatCharacteristics);
+
+            // Создание предикторов
             var predictors = new List<IPredictor>();
-            // Байесовский предиктор — основной
             if (predictorConfig.Bayesian.Enabled)
             {
-                string threatCharacteristicsPath = Path.Combine(appSettingsPath, "threat_characteristics.json");
-                var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(threatCharacteristicsPath);
                 predictors.Add(new BayesianPredictor(geo, db, zoneService, heuristics, threatCharacteristics));
                 Console.WriteLine("🧠 Байесовский предиктор активирован.");
             }
-            // Опционально другие предикторы (по конфигурации)
             if (predictorConfig.Graph.Enabled)
             {
                 var gp = new GraphPredictor(geo, db, heuristics, predictorConfig.Graph);
@@ -240,13 +254,6 @@ namespace Numenius.App
                 throw new Exception("Нет активных предикторов.");
 
             // Контекстный анализатор
-            string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
-            if (!File.Exists(contextConfigPath))
-            {
-                var defaultContext = new ContextAnalyzerConfig();
-                ConfigLoader.SaveConfig(defaultContext, contextConfigPath);
-            }
-            var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
             IContextAnalyzer contextAnalyzer;
             switch (contextConfig.Mode.ToLowerInvariant())
             {

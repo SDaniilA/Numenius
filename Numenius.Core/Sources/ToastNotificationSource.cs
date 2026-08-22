@@ -141,14 +141,16 @@ namespace Numenius.Core.Sources
                     string cleaned = StringUtilities.CleanMessage(message);
 
                     var raw = new RawMessage
-                    {
-                        Id = $"toast_{id}_{DateTime.UtcNow.Ticks}",
-                        SourceType = _sourceType,
-                        Sender = sender,
-                        Text = cleaned,
-                        ReceivedAt = DateTime.UtcNow,
-                        Priority = DeterminePriority(cleaned)
-                    };
+					{
+						Id = $"toast_{id}_{DateTime.UtcNow.Ticks}",
+						SourceType = _sourceType,
+						Sender = sender,
+						Text = cleaned,
+						ReceivedAt = DateTime.UtcNow,
+						Priority = DeterminePriority(cleaned),
+						EventTime = notif.CreationTime.UtcDateTime, // время появления уведомления
+						ReplyToMessageId = null
+					};
 
                     OnMessageReceived?.Invoke(this, raw);
 					// DEBUG

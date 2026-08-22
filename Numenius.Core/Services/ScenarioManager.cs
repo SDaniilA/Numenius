@@ -15,16 +15,23 @@ namespace Numenius.Core.Services
         private readonly IGeoService _geo;
         private readonly HeuristicsConfig _heuristics;
         private readonly ZoneService _zoneService;
+        private readonly Dictionary<string, ThreatCharacteristics> _threatCharacteristics;
         private readonly Dictionary<int, Incident> _activeCache = new();
         private DateTime _cacheValidUntil = DateTime.MinValue;
         private readonly object _cacheLock = new();
 
-        public ScenarioManager(IDatabaseService db, IGeoService geo, HeuristicsConfig heuristics, ZoneService zoneService)
+        public ScenarioManager(
+            IDatabaseService db,
+            IGeoService geo,
+            HeuristicsConfig heuristics,
+            ZoneService zoneService,
+            Dictionary<string, ThreatCharacteristics> threatCharacteristics)
         {
             _db = db;
             _geo = geo;
             _heuristics = heuristics;
-            _zoneService = zoneService ?? throw new ArgumentNullException(nameof(zoneService));
+            _zoneService = zoneService;
+            _threatCharacteristics = threatCharacteristics ?? new Dictionary<string, ThreatCharacteristics>();
         }
 
         private async Task RefreshCacheAsync()
@@ -59,16 +66,36 @@ namespace Numenius.Core.Services
                 var activeNow = _activeCache.Values
                     .Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired)
                     .ToList();
-                foreach (var inc in activeNow)
+
+                string specificType = GetThreatTypeFromText(message.CleanedText);
+                if (specificType != null)
                 {
-                    if ((DateTime.UtcNow - inc.LastSeen).TotalHours < 2)
+                    foreach (var inc in activeNow)
                     {
-                        inc.Status = IncidentStatus.Terminated;
-                        inc.Notes += " Закрыт по отбою без НП.";
-                        await _db.UpdateIncidentAsync(inc);
-                        lock (_cacheLock) _activeCache.Remove(inc.Id);
-                        _zoneService.RemoveZoneForIncident(inc.Id);
-                        GraphLogger.Log($"Инц. #{inc.Id} закрыт по отбою без НП");
+                        if (string.Equals(inc.ThreatType, specificType, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(inc.Category.ToString(), specificType, StringComparison.OrdinalIgnoreCase))
+                        {
+                            inc.Status = IncidentStatus.Terminated;
+                            inc.Notes += " Закрыт по отбою без НП (по типу).";
+                            await _db.UpdateIncidentAsync(inc);
+                            lock (_cacheLock) _activeCache.Remove(inc.Id);
+                            GraphLogger.Log($"Инц. #{inc.Id} закрыт по отбою без НП (по типу)");
+                        }
+                    }
+                }
+                else
+                {
+                    var lastActive = activeNow
+                        .Where(i => (DateTime.UtcNow - GetIncidentLastSeen(i)).TotalMinutes < 30)
+                        .OrderByDescending(i => GetIncidentLastSeen(i))
+                        .FirstOrDefault();
+                    if (lastActive != null)
+                    {
+                        lastActive.Status = IncidentStatus.Terminated;
+                        lastActive.Notes += " Закрыт по отбою без НП (последний).";
+                        await _db.UpdateIncidentAsync(lastActive);
+                        lock (_cacheLock) _activeCache.Remove(lastActive.Id);
+                        GraphLogger.Log($"Инц. #{lastActive.Id} закрыт по отбою без НП (последний)");
                     }
                 }
                 return null;
@@ -82,18 +109,18 @@ namespace Numenius.Core.Services
                     .Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired)
                     .Where(i => i.AffectedSettlements.Any(settlement =>
                         message.Settlements.Any(mS => string.Equals(settlement, mS.Name, StringComparison.OrdinalIgnoreCase))))
-                    .ToList();
+                    .OrderBy(i => GetIncidentFirstSeen(i))
+                    .FirstOrDefault();
 
-                foreach (var inc in toClose)
+                if (toClose != null)
                 {
-                    inc.Status = IncidentStatus.Terminated;
-                    inc.Notes += $" Закрыт по отбою с НП ({string.Join(", ", message.Settlements.Select(s => s.Name))})";
-                    await _db.UpdateIncidentAsync(inc);
-                    lock (_cacheLock) _activeCache.Remove(inc.Id);
-                    _zoneService.RemoveZoneForIncident(inc.Id);
-                    GraphLogger.Log($"Инц. #{inc.Id} закрыт по отбою с НП");
+                    toClose.Status = IncidentStatus.Terminated;
+                    toClose.Notes += $" Закрыт по отбою с НП ({string.Join(", ", message.Settlements.Select(s => s.Name))})";
+                    await _db.UpdateIncidentAsync(toClose);
+                    lock (_cacheLock) _activeCache.Remove(toClose.Id);
+                    GraphLogger.Log($"Инц. #{toClose.Id} закрыт по отбою с НП");
                 }
-                return toClose.FirstOrDefault();
+                return toClose;
             }
 
             // ===== ОБЫЧНОЕ СООБЩЕНИЕ С НП =====
@@ -102,9 +129,8 @@ namespace Numenius.Core.Services
 
             await RefreshCacheAsync();
 
-            var newZone = _zoneService.CreateZone(message.Settlements, message.ThreatType);
-
             Incident? matched = null;
+            double timeDiffMinutes = 0;
 
             lock (_cacheLock)
             {
@@ -117,14 +143,15 @@ namespace Numenius.Core.Services
                         !string.Equals(inc.ThreatType, message.ThreatType, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var incZone = _zoneService.GetOrCreateZoneForIncident(inc, inc.Points.Select(p => new Settlement
-                    {
-                        Name = p.SettlementName,
-                        Lat = p.Lat,
-                        Lon = p.Lon
-                    }).ToList(), inc.ThreatType);
+                    timeDiffMinutes = (GetMessageEventTime(message) - GetIncidentLastSeen(inc)).TotalMinutes;
 
-                    if (_zoneService.ZonesIntersect(newZone, incZone))
+                    if (_zoneService.IsSameDrone(inc, message, timeDiffMinutes))
+                    {
+                        matched = inc;
+                        break;
+                    }
+
+                    if (_zoneService.IsFarDrone(inc, message, timeDiffMinutes))
                     {
                         matched = inc;
                         break;
@@ -138,8 +165,8 @@ namespace Numenius.Core.Services
                 {
                     ThreatType = message.ThreatType,
                     Category = message.Category,
-                    FirstSeen = message.ReceivedAt,
-                    LastSeen = message.ReceivedAt,
+                    FirstSeen = GetMessageEventTime(message),
+                    LastSeen = GetMessageEventTime(message),
                     Status = IncidentStatus.Active,
                     Confidence = message.Confidence,
                     Points = new List<IncidentPoint>(),
@@ -149,33 +176,40 @@ namespace Numenius.Core.Services
                 };
             }
 
-            foreach (var s in message.Settlements)
+            if (_zoneService.IsFarDrone(matched, message, timeDiffMinutes))
             {
-                if (s == null || string.IsNullOrEmpty(s.Name)) continue;
-                bool alreadyExists = matched.Points.Any(p =>
-                    string.Equals(p.SettlementName, s.Name, StringComparison.OrdinalIgnoreCase) &&
-                    Math.Abs(p.Lat - s.Lat) < 0.0001 &&
-                    Math.Abs(p.Lon - s.Lon) < 0.0001);
-                if (alreadyExists) continue;
-
-                matched.Points.Add(new IncidentPoint
+                _zoneService.HandleFarDrone(matched, message);
+            }
+            else
+            {
+                foreach (var s in message.Settlements)
                 {
-                    SettlementName = s.Name,
-                    Lat = s.Lat,
-                    Lon = s.Lon,
-                    Time = message.ReceivedAt
-                });
-                if (!matched.AffectedSettlements.Contains(s.Name))
-                    matched.AffectedSettlements.Add(s.Name);
+                    if (s == null || string.IsNullOrEmpty(s.Name)) continue;
+                    bool alreadyExists = matched.Points.Any(p =>
+                        string.Equals(p.SettlementName, s.Name, StringComparison.OrdinalIgnoreCase) &&
+                        Math.Abs(p.Lat - s.Lat) < 0.0001 &&
+                        Math.Abs(p.Lon - s.Lon) < 0.0001);
+                    if (alreadyExists) continue;
+
+                    matched.Points.Add(new IncidentPoint
+                    {
+                        SettlementName = s.Name,
+                        Lat = s.Lat,
+                        Lon = s.Lon,
+                        Time = GetMessageEventTime(message)
+                    });
+                    if (!matched.AffectedSettlements.Contains(s.Name))
+                        matched.AffectedSettlements.Add(s.Name);
+                }
             }
 
-            matched.LastSeen = message.ReceivedAt;
+            matched.LastSeen = GetMessageEventTime(message);
 
             if (message.Status == "Watch")
             {
                 matched.Status = IncidentStatus.Watch;
                 matched.IsReconCompleted = true;
-                matched.ReconTime = message.ReceivedAt;
+                matched.ReconTime = GetMessageEventTime(message);
                 matched.Confidence += _heuristics.WatchConfidenceBoost;
                 matched.Notes += " Режим внимания (разведка завершена).";
             }
@@ -193,7 +227,6 @@ namespace Numenius.Core.Services
                 await _db.SaveIncidentAsync(matched);
                 lock (_cacheLock)
                     _activeCache[matched.Id] = matched;
-                _zoneService.GetOrCreateZoneForIncident(matched, message.Settlements, matched.ThreatType);
                 var firstPoint = matched.Points.FirstOrDefault();
                 if (firstPoint != null)
                     GraphLogger.LogIncidentCreated(matched.Id, matched.ThreatType, firstPoint.SettlementName);
@@ -203,7 +236,6 @@ namespace Numenius.Core.Services
                 await _db.UpdateIncidentAsync(matched);
                 lock (_cacheLock)
                     _activeCache[matched.Id] = matched;
-                _zoneService.GetOrCreateZoneForIncident(matched, message.Settlements, matched.ThreatType);
                 GraphLogger.LogIncidentUpdated(matched.Id, matched.ThreatType, matched.Points.Count);
             }
 
@@ -211,7 +243,6 @@ namespace Numenius.Core.Services
             {
                 lock (_cacheLock)
                     _activeCache.Remove(matched.Id);
-                _zoneService.RemoveZoneForIncident(matched.Id);
             }
 
             return matched;
@@ -235,7 +266,6 @@ namespace Numenius.Core.Services
                 await _db.UpdateIncidentAsync(target);
                 lock (_cacheLock)
                     _activeCache.Remove(incidentId);
-                _zoneService.RemoveZoneForIncident(incidentId);
             }
         }
 
@@ -259,13 +289,8 @@ namespace Numenius.Core.Services
                     if (inc.Status == IncidentStatus.Terminated || inc.Status == IncidentStatus.Expired)
                         continue;
 
-                    double maxLifetimeHours;
-                    if (inc.ThreatType == "FPV")
-                        maxLifetimeHours = _heuristics.FpvLifetimeMinutes / 60.0;
-                    else
-                        maxLifetimeHours = _heuristics.DefaultLifetimeHours;
-
-                    if ((now - inc.LastSeen).TotalHours > maxLifetimeHours)
+                    double maxLifetimeHours = GetLifetimeHours(inc.ThreatType);
+                    if ((now - GetIncidentLastSeen(inc)).TotalHours > maxLifetimeHours)
                         expired.Add(inc);
                 }
             }
@@ -277,12 +302,55 @@ namespace Numenius.Core.Services
                 await _db.UpdateIncidentAsync(inc);
                 lock (_cacheLock)
                     _activeCache.Remove(inc.Id);
-                _zoneService.RemoveZoneForIncident(inc.Id);
                 GraphLogger.Log($"Инц. #{inc.Id} закрыт по сроку (TTL истёк)");
             }
 
             if (expired.Count > 0)
                 Console.WriteLine($"🧠 Закрыто по сроку {expired.Count} инцидентов.");
+        }
+
+        // ========== Вспомогательные методы ==========
+
+        private DateTime GetMessageEventTime(ParsedMessage message)
+        {
+            return message.EventTime ?? message.ReceivedAt;
+        }
+
+        private DateTime GetIncidentLastSeen(Incident incident)
+        {
+            // Последняя точка инцидента имеет время события
+            if (incident.Points.Any())
+                return incident.Points.OrderByDescending(p => p.Time).First().Time;
+            return incident.LastSeen;
+        }
+
+        private DateTime GetIncidentFirstSeen(Incident incident)
+        {
+            if (incident.Points.Any())
+                return incident.Points.OrderBy(p => p.Time).First().Time;
+            return incident.FirstSeen;
+        }
+
+        private double GetLifetimeHours(string threatType)
+        {
+            if (_threatCharacteristics.TryGetValue(threatType, out var tth))
+                return tth.LifetimeMinutes / 60.0;
+            return _heuristics.DefaultLifetimeHours;
+        }
+
+        private string GetThreatTypeFromText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            var lower = text.ToLowerInvariant();
+            if (lower.Contains("фпв") || lower.Contains("fpv"))
+                return "FPV";
+            if (lower.Contains("бпла") || lower.Contains("дрон") || lower.Contains("ударному"))
+                return "Drone";
+            if (lower.Contains("ракет") || lower.Contains("рсзо"))
+                return "Rocket";
+            if (lower.Contains("хорнет") || lower.Contains("дартс"))
+                return "StrikeDrone";
+            return null;
         }
     }
 }

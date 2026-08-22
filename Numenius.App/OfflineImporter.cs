@@ -83,7 +83,8 @@ namespace Numenius.App
 						Text = text,
 						ReceivedAt = receivedAt,
 						Priority = 3,
-						ReplyToMessageId = msg.ReplyToMessageId?.ToString() // <-- добавлено
+						EventTime = receivedAt, // время публикации = receivedAt (уже UTC)
+						ReplyToMessageId = msg.ReplyToMessageId?.ToString()
 					};
 					
                     await _processor.ProcessAsync(raw, cts.Token);

@@ -65,6 +65,7 @@ namespace Numenius.Core.Processors
             }
 
             var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
+			parsed.EventTime = raw.EventTime ?? raw.ReceivedAt;
             parsed.SourceMessageId = raw.Id;
 
             if (contextMessage != null && parsed.Settlements.Count == 0)

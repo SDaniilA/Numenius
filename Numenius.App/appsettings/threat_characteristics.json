@@ -4,14 +4,19 @@
     "MaxDistanceKm": 40,
     "LifetimeMinutes": 30
   },
+  "FpvFiberOptic": {
+    "MaxSpeedKmh": 160,
+    "MaxDistanceKm": 50,
+    "LifetimeMinutes": 40
+  },
   "StrikeDrone": {
     "MaxSpeedKmh": 150,
-    "MaxDistanceKm": 50,
+    "MaxDistanceKm": 100,
     "LifetimeMinutes": 60
   },
   "Recon": {
     "MaxSpeedKmh": 80,
-    "MaxDistanceKm": 70,
+    "MaxDistanceKm": 25,
     "LifetimeMinutes": 120
   },
   "RearDrone": {

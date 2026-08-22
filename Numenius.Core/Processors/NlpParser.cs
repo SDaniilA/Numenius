@@ -97,6 +97,16 @@ namespace Numenius.Core.Processors
 
         private void DetectThreatType(string lowerText, ParsedMessage parsed)
         {
+			
+			// Проверяем оптоволоконный FPV первым
+			if (lowerText.Contains("оптоволокн") || lowerText.Contains("оптик") || lowerText.Contains("волокн") ||
+				lowerText.Contains("fiberoptic") || lowerText.Contains("на проводе"))
+			{
+				parsed.ThreatType = "FpvFiberOptic";
+				parsed.Category = ThreatCategory.Drone;
+				return;
+			}
+			
             foreach (var kw in _threatKeywords)
             {
                 if (lowerText.Contains(kw))
