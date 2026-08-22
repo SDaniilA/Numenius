@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using Newtonsoft.Json;
 using Numenius.Core.Config;
 using Numenius.Core.Interfaces;
@@ -280,42 +281,52 @@ namespace Numenius.App
 				}
 			});
             // Обработчик команд
-            _ = Task.Run(() =>
-            {
-                while (true)
-                {
-                    try
-                    {
-                        Console.Write("\n> ");
-                        var line = Console.ReadLine();
-                        if (line == null) break;
-                        var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length == 0) continue;
+			_ = Task.Run(async () =>
+			{
+				while (true)
+				{
+					try
+					{
+						Console.Write("\n> ");
+						var line = Console.ReadLine();
+						if (line == null) break;
+						var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+						if (parts.Length == 0) continue;
 
-                        if (parts[0].Equals("report", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var period = parts.Length > 1 ? parts[1].ToLower() : "day";
-                            _ = Task.Run(async () =>
-                            {
-                                Console.WriteLine($"📊 Генерация отчёта за {period}...");
-                                await GenerateAndShowReport(period, db, heuristics);
-                            });
-                        }
-                        else if (parts[0].Equals("exit", StringComparison.OrdinalIgnoreCase))
-                        {
-                            Environment.Exit(0);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Доступные команды: report [day|week|month], exit");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"⚠️ Ошибка обработки команды: {ex.Message}");
-                    }
-                }
-            });
+						if (parts[0].Equals("report", StringComparison.OrdinalIgnoreCase))
+						{
+							var period = parts.Length > 1 ? parts[1].ToLower() : "day";
+							_ = Task.Run(async () =>
+							{
+								Console.WriteLine($"📊 Генерация отчёта за {period}...");
+								await GenerateAndShowReport(period, db, heuristics);
+							});
+						}
+						else if (parts[0].Equals("exit", StringComparison.OrdinalIgnoreCase))
+						{
+							Environment.Exit(0);
+						}
+						else
+						{
+							// Ручное сообщение
+							var raw = new RawMessage
+							{
+								Id = $"manual_{DateTime.UtcNow.Ticks}",
+								SourceType = "Manual",
+								Sender = "Ручной ввод",
+								Text = line,
+								ReceivedAt = DateTime.UtcNow,
+								Priority = 3
+							};
+							await processor.ProcessAsync(raw, CancellationToken.None);
+						}
+					}
+					catch (Exception ex)
+					{
+						Console.WriteLine($"⚠️ Ошибка обработки команды: {ex.Message}");
+					}
+				}
+			});
 
             await Task.Delay(-1);
         }

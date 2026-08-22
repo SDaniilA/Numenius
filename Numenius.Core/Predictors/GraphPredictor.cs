@@ -23,10 +23,10 @@ namespace Numenius.Core.Predictors
 
         public GraphPredictor(IGeoService geo, IDatabaseService db, HeuristicsConfig heuristics, GraphPredictorConfig config)
         {
-            _geo = geo ?? throw new ArgumentNullException(nameof(geo));
-            _db = db ?? throw new ArgumentNullException(nameof(db));
-            _heuristics = heuristics ?? throw new ArgumentNullException(nameof(heuristics));
-            _config = config ?? throw new ArgumentNullException(nameof(config));
+            _geo = geo;
+            _db = db;
+            _heuristics = heuristics;
+            _config = config;
         }
 
         public async Task UpdateGraphAsync()
@@ -68,28 +68,48 @@ namespace Numenius.Core.Predictors
                 return null;
             }
 
-            var extractor = new FeatureExtractor();
-            var features = extractor.ExtractFeatures(incident);
+            // Получаем список населённых пунктов из инцидента
+            var settlementNames = incident.Points.Select(p => p.SettlementName).Distinct().ToList();
 
+            // Ищем узел сначала по типу и совпадению с любым из населённых пунктов
+            GraphNode? currentNode = null;
+
+            // Попытка 1: точное совпадение типа и региона (как в старом коде)
+            var features = new FeatureExtractor().ExtractFeatures(incident);
             string regionKey = GetRegionKey(incident.Points);
-            string currentKey = $"{features.ThreatType}|{features.TimeOfDay}|{features.Season}|{features.DayOfWeek}|{features.HasRecon}|{GetSpeedBin(features.AverageSpeed)}|{regionKey}";
-
-            var currentNode = _graph.Nodes.FirstOrDefault(n =>
+            currentNode = _graph.Nodes.FirstOrDefault(n =>
                 n.ThreatType == features.ThreatType &&
-                n.TimeOfDay == features.TimeOfDay &&
-                n.Season == features.Season &&
-                n.DayOfWeek == features.DayOfWeek &&
-                n.HasRecon == features.HasRecon &&
-                GetSpeedBin(n.AvgSpeed) == GetSpeedBin(features.AverageSpeed) &&
-                n.Region == regionKey
-            );
+                n.Region == regionKey);
+
+            // Попытка 2: совпадение по типу и любому из НП (если в узле регион - название или кластер, содержащий НП)
+            if (currentNode == null)
+            {
+                currentNode = _graph.Nodes.FirstOrDefault(n =>
+                    n.ThreatType == features.ThreatType &&
+                    settlementNames.Any(s => n.Region.Contains(s, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            // Попытка 3: просто по типу
+            if (currentNode == null)
+            {
+                currentNode = _graph.Nodes.FirstOrDefault(n => n.ThreatType == features.ThreatType);
+            }
+
+            // Попытка 4: если тип Unknown, берём узел с максимальной частотой
+            if (currentNode == null && (features.ThreatType == "Unknown" || string.IsNullOrEmpty(features.ThreatType)))
+            {
+                currentNode = _graph.Nodes.OrderByDescending(n => n.OccurrenceCount).FirstOrDefault();
+            }
 
             if (currentNode == null)
             {
-                Console.WriteLine($"[{Name}] Возврат null: нет узла в графе для ключа '{currentKey}'");
+                Console.WriteLine($"[{Name}] Возврат null: не удалось найти узел для типа '{features.ThreatType}'");
                 return null;
             }
 
+            Console.WriteLine($"[{Name}] Используем узел ID={currentNode.Id}, регион={currentNode.Region}, тип={currentNode.ThreatType}");
+
+            // Собираем рёбра
             var now = DateTime.UtcNow;
             var candidateEdges = currentNode.Edges
                 .Where(e => e.Probability > 0 && e.TransitionCount >= _config.MinOccurrencesForEdge)
@@ -110,18 +130,23 @@ namespace Numenius.Core.Predictors
 
             var bestEdges = candidateEdges.Select(x => x.Edge).ToList();
 
+            // Целевые зоны
             var affectedSettlements = new List<string>();
             foreach (var edge in bestEdges)
             {
                 var targetNode = _graph.Nodes.FirstOrDefault(n => n.Id == edge.TargetNodeId);
                 if (targetNode != null && !string.IsNullOrEmpty(targetNode.Region))
                 {
-                    affectedSettlements.Add(targetNode.Region);
+                    // Разбиваем регион на несколько, если он содержит запятые
+                    affectedSettlements.AddRange(targetNode.Region.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(r => r.Trim())
+                        .Where(r => !string.IsNullOrEmpty(r)));
                 }
             }
             if (affectedSettlements.Count == 0)
                 affectedSettlements.Add(regionKey);
 
+            // Окно атаки
             DateTime windowStart, windowEnd;
             if (bestEdges.Count > 0)
             {
@@ -145,6 +170,7 @@ namespace Numenius.Core.Predictors
             double confidence = avgProb * 0.5 + sourceFactor * 0.3 + pointFactor * 0.2;
             confidence = Math.Clamp(confidence, 0.0, 1.0);
 
+            // Геозона
             string zoneGeoJson = "";
             if (affectedSettlements.Count > 0)
             {
@@ -203,14 +229,6 @@ namespace Numenius.Core.Predictors
             double latRound = Math.Round((first.Lat + last.Lat) / 2, 1);
             double lonRound = Math.Round((first.Lon + last.Lon) / 2, 1);
             return $"{latRound:F1}_{lonRound:F1}";
-        }
-
-        private string GetSpeedBin(double speed)
-        {
-            if (speed < 10) return "Slow";
-            if (speed < 50) return "Medium";
-            if (speed < 150) return "Fast";
-            return "VeryFast";
         }
     }
 }

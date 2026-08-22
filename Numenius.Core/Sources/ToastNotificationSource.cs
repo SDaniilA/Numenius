@@ -151,7 +151,9 @@ namespace Numenius.Core.Sources
                     };
 
                     OnMessageReceived?.Invoke(this, raw);
-
+					// DEBUG
+					Console.WriteLine($"✅ Событие вызвано для уведомления {id}");
+					// DEBUG
                     lock (_lock)
                     {
                         _processedIds.Add(id);

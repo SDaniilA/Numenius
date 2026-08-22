@@ -7,7 +7,7 @@
     },
     {
       "Type": "Manual",
-      "Enabled": true,
+      "Enabled": false,
       "ConfigFile": "manual_input.json"
     }
   ],

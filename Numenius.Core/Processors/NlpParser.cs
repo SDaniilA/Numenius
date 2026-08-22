@@ -237,13 +237,13 @@ namespace Numenius.Core.Processors
             }
 
             // Последний вариант – используем извлечённые поселения
-            if (settlements.Count >= 2)
+            /* if (settlements.Count >= 2)
             {
                 var first = settlements.First();
                 var last = settlements.Last();
                 if (!string.Equals(first.Name, last.Name, StringComparison.OrdinalIgnoreCase))
                     return $"{first.Name}->{last.Name}";
-            }
+            } */
 
             return null;
         }

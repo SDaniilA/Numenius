@@ -7,7 +7,6 @@ using Numenius.Core.Interfaces;
 using Numenius.Core.Models;
 using Numenius.Core.Utilities;
 
-
 namespace Numenius.Core.Services
 {
     public class ScenarioManager : IScenarioManager
@@ -53,77 +52,46 @@ namespace Numenius.Core.Services
 
             // ===== ОТБОЙ БЕЗ НП =====
             if (message.Settlements.Count == 0 && message.Status == "Terminated")
-			{
-				await RefreshCacheAsync();
-				// Если тип Unknown – закрываем все активные инциденты за последние 2 часа
-				if (message.ThreatType == "Unknown")
-				{
-					var activeNow = _activeCache.Values.Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired).ToList();
-					foreach (var inc in activeNow)
-					{
-						if ((DateTime.UtcNow - inc.LastSeen).TotalHours < 2)
-						{
-							inc.Status = IncidentStatus.Terminated;
-							inc.Notes += " Закрыт по общему отбою.";
-							await _db.UpdateIncidentAsync(inc);
-							lock (_cacheLock) _activeCache.Remove(inc.Id);
-							GraphLogger.Log($"Инц. #{inc.Id} закрыт по общему отбою.");
-						}
-					}
-					return null;
-				}
-				// Далее – существующая логика для типа с конкретным типом
-				// ...
-			}
+            {
+                await RefreshCacheAsync();
+                var activeNow = _activeCache.Values
+                    .Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired)
+                    .ToList();
+                // Закрываем все активные инциденты, которые были обновлены за последние 2 часа
+                foreach (var inc in activeNow)
+                {
+                    if ((DateTime.UtcNow - inc.LastSeen).TotalHours < 2)
+                    {
+                        inc.Status = IncidentStatus.Terminated;
+                        inc.Notes += " Закрыт по отбою без НП.";
+                        await _db.UpdateIncidentAsync(inc);
+                        lock (_cacheLock) _activeCache.Remove(inc.Id);
+                        GraphLogger.Log($"Инц. #{inc.Id} закрыт по отбою без НП");
+                    }
+                }
+                return null;
+            }
 
             // ===== ОТБОЙ С НП =====
             if (message.Settlements.Count > 0 && message.Status == "Terminated")
             {
                 await RefreshCacheAsync();
-                Incident? matchedIncident = null;
-                lock (_cacheLock)
+                // Закрываем все активные инциденты, которые содержат хотя бы один из указанных НП
+                var toClose = _activeCache.Values
+                    .Where(i => i.Status != IncidentStatus.Terminated && i.Status != IncidentStatus.Expired)
+                    .Where(i => i.AffectedSettlements.Any(settlement => 
+                        message.Settlements.Any(mS => string.Equals(settlement, mS.Name, StringComparison.OrdinalIgnoreCase))))
+                    .ToList();
+
+                foreach (var inc in toClose)
                 {
-                    foreach (var inc in _activeCache.Values)
-                    {
-                        if (inc.ThreatType != message.ThreatType && message.ThreatType != "Unknown")
-                            continue;
-                        var common = inc.AffectedSettlements.Intersect(message.Settlements.Select(s => s.Name), StringComparer.OrdinalIgnoreCase);
-                        if (common.Any())
-                        {
-                            matchedIncident = inc;
-                            break;
-                        }
-                    }
-                    if (matchedIncident == null && message.Settlements.Count > 0)
-                    {
-                        var first = message.Settlements.First();
-                        double bestDist = double.MaxValue;
-                        foreach (var inc in _activeCache.Values)
-                        {
-                            if (inc.ThreatType != message.ThreatType && message.ThreatType != "Unknown")
-                                continue;
-                            if (inc.Points.Count == 0) continue;
-                            var lastPoint = inc.Points.Last();
-                            double dist = _geo.CalculateDistance(lastPoint.Lat, lastPoint.Lon, first.Lat, first.Lon);
-                            if (dist < bestDist && dist < 50)
-                            {
-                                bestDist = dist;
-                                matchedIncident = inc;
-                            }
-                        }
-                    }
+                    inc.Status = IncidentStatus.Terminated;
+                    inc.Notes += $" Закрыт по отбою с НП ({string.Join(", ", message.Settlements.Select(s => s.Name))})";
+                    await _db.UpdateIncidentAsync(inc);
+                    lock (_cacheLock) _activeCache.Remove(inc.Id);
+                    GraphLogger.Log($"Инц. #{inc.Id} закрыт по отбою с НП");
                 }
-                if (matchedIncident != null && matchedIncident.Status != IncidentStatus.Terminated && matchedIncident.Status != IncidentStatus.Expired)
-                {
-                    matchedIncident.Status = IncidentStatus.Terminated;
-                    matchedIncident.Notes += $" Закрыт по отбою с НП ({message.Sender})";
-                    await _db.UpdateIncidentAsync(matchedIncident);
-                    lock (_cacheLock)
-                        _activeCache.Remove(matchedIncident.Id);
-                    GraphLogger.Log($"Инц. #{matchedIncident.Id} закрыт по отбою с НП");
-                    return matchedIncident;
-                }
-                return null;
+                return toClose.FirstOrDefault();
             }
 
             // ===== ОБЫЧНОЕ СООБЩЕНИЕ С НП =====
@@ -136,36 +104,43 @@ namespace Numenius.Core.Services
 
             lock (_cacheLock)
             {
+                // Определяем порог расстояния в зависимости от типа угрозы
+                double distanceThreshold = GetDistanceThreshold(message.ThreatType);
+                // Ищем подходящий инцидент
                 foreach (var inc in _activeCache.Values)
                 {
-                    if (inc.ThreatType != message.ThreatType && message.ThreatType != "Unknown")
+                    // Не объединяем с завершёнными
+                    if (inc.Status == IncidentStatus.Terminated || inc.Status == IncidentStatus.Expired)
                         continue;
 
-                    double maxLifetimeHours;
-                    if (inc.ThreatType == "FPV")
-                        maxLifetimeHours = _heuristics.FpvLifetimeMinutes / 60.0;
-                    else
-                        maxLifetimeHours = _heuristics.DefaultLifetimeHours;
-
-                    if ((DateTime.UtcNow - inc.LastSeen).TotalHours > maxLifetimeHours)
+                    // Тип должен совпадать (или быть Unknown у нового)
+                    if (!string.IsNullOrEmpty(message.ThreatType) && message.ThreatType != "Unknown" &&
+                        !string.Equals(inc.ThreatType, message.ThreatType, StringComparison.OrdinalIgnoreCase))
                         continue;
 
+                    // Время с последнего обновления не должно быть слишком большим
+                    double maxIdleHours = GetMaxIdleHours(message.ThreatType);
+                    if ((DateTime.UtcNow - inc.LastSeen).TotalHours > maxIdleHours)
+                        continue;
+
+                    // Проверка расстояния между последней точкой инцидента и первой точкой нового сообщения
                     if (inc.Points.Count > 0 && message.Settlements.Count > 0)
                     {
-                        var last = inc.Points.Last();
-                        var first = message.Settlements.First();
-                        if (first != null)
-                        {
-                            double dist = _geo.CalculateDistance(last.Lat, last.Lon, first.Lat, first.Lon);
-                            if (dist > 50)
-                                continue;
-                        }
+                        var lastIncidentPoint = inc.Points.Last();
+                        var firstNewPoint = message.Settlements.First();
+                        double dist = _geo.CalculateDistance(
+                            lastIncidentPoint.Lat, lastIncidentPoint.Lon,
+                            firstNewPoint.Lat, firstNewPoint.Lon);
+                        if (dist > distanceThreshold)
+                            continue;
                     }
+
                     matched = inc;
                     break;
                 }
             }
 
+            // Если не нашли – создаём новый
             if (matched == null)
             {
                 matched = new Incident
@@ -183,10 +158,16 @@ namespace Numenius.Core.Services
                 };
             }
 
+            // Добавляем точки, избегая дубликатов
             foreach (var s in message.Settlements)
             {
                 if (s == null || string.IsNullOrEmpty(s.Name)) continue;
-                if (Math.Abs(s.Lat) < 0.0001 && Math.Abs(s.Lon) < 0.0001) continue;
+                // Проверка на дубликат по названию и координатам
+                bool alreadyExists = matched.Points.Any(p =>
+                    string.Equals(p.SettlementName, s.Name, StringComparison.OrdinalIgnoreCase) &&
+                    Math.Abs(p.Lat - s.Lat) < 0.0001 &&
+                    Math.Abs(p.Lon - s.Lon) < 0.0001);
+                if (alreadyExists) continue;
 
                 matched.Points.Add(new IncidentPoint
                 {
@@ -253,8 +234,8 @@ namespace Numenius.Core.Services
 
         public async Task CloseIncidentAsync(int incidentId, string reason)
         {
-            var inc = await _db.GetActiveIncidentsAsync();
-            var target = inc.FirstOrDefault(i => i.Id == incidentId);
+            var active = await _db.GetActiveIncidentsAsync();
+            var target = active.FirstOrDefault(i => i.Id == incidentId);
             if (target != null)
             {
                 target.Status = IncidentStatus.Terminated;
@@ -285,6 +266,7 @@ namespace Numenius.Core.Services
                     if (inc.Status == IncidentStatus.Terminated || inc.Status == IncidentStatus.Expired)
                         continue;
 
+                    // Время жизни в зависимости от типа
                     double maxLifetimeHours;
                     if (inc.ThreatType == "FPV")
                         maxLifetimeHours = _heuristics.FpvLifetimeMinutes / 60.0;
@@ -308,6 +290,29 @@ namespace Numenius.Core.Services
 
             if (expired.Count > 0)
                 Console.WriteLine($"🧠 Закрыто по сроку {expired.Count} инцидентов.");
+        }
+
+        private double GetDistanceThreshold(string threatType)
+        {
+            // Если тип FPV – маленький порог (скорость низкая, но перемещается)
+            if (threatType == "FPV")
+                return 10.0; // 10 км
+            if (threatType == "Rocket" || threatType == "Missile")
+                return 50.0;
+            if (threatType == "Unknown")
+                return 20.0;
+            // Для остальных дронов (Hornet, Dart и т.д.)
+            return 15.0;
+        }
+
+        private double GetMaxIdleHours(string threatType)
+        {
+            // Максимальное время без сообщений для объединения
+            if (threatType == "FPV")
+                return 0.5; // 30 минут
+            if (threatType == "Rocket")
+                return 1.5; // 90 минут
+            return 1.0; // 60 минут для остальных
         }
     }
 }
