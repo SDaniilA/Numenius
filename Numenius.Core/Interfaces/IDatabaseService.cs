@@ -36,5 +36,8 @@ namespace Numenius.Core.Interfaces
         // Координаты
         Task SaveSettlementAsync(Settlement settlement);
         Task<IEnumerable<Settlement>> GetAllSettlementsAsync();
+		
+		// инциденты
+		Task<ParsedMessage?> GetLastParsedMessageForIncidentAsync(int incidentId);
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Newtonsoft.Json;
+using System.Collections.Generic;
 
 namespace Numenius.Core.Config
 {
@@ -33,5 +34,13 @@ namespace Numenius.Core.Config
             var json = JsonConvert.SerializeObject(config, Formatting.Indented);
             File.WriteAllText(path, json);
         }
+		public static Dictionary<string, ThreatCharacteristics> LoadThreatCharacteristics(string path)
+		{
+			if (!File.Exists(path))
+				return new Dictionary<string, ThreatCharacteristics>();
+			var json = File.ReadAllText(path);
+			return JsonConvert.DeserializeObject<Dictionary<string, ThreatCharacteristics>>(json) 
+				   ?? new Dictionary<string, ThreatCharacteristics>();
+		}
     }
 }

@@ -19,6 +19,9 @@ namespace Numenius.Core.Config
 		
 		[JsonProperty("Trajectory")]
         public TrajectoryPredictorConfig Trajectory { get; set; } = new();
+		
+		[JsonProperty("Bayesian")]
+		public BayesianPredictorConfig Bayesian { get; set; } = new();
     }
 
     public class GraphPredictorConfig
@@ -63,4 +66,9 @@ namespace Numenius.Core.Config
         [JsonProperty("Weights")]
         public Dictionary<string, double> Weights { get; set; } = new();
     }
+	public class BayesianPredictorConfig
+	{
+		[JsonProperty("Enabled")]
+		public bool Enabled { get; set; } = true;
+	}
 }

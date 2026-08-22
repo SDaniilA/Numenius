@@ -1,17 +1,17 @@
 {
-  "ActivePredictor": "Graph",
+  "ActivePredictor": "Bayesian",
   "Graph": {
-    "Enabled": true,
+    "Enabled": false,
     "MinOccurrencesForEdge": 3,
     "MaxNodeAgeDays": 30,
     "ConfidenceBoostPerEdge": 0.05
   },
   "Statistical": {
-    "Enabled": true,
+    "Enabled": false,
     "MaxDaysHistory": 30
   },
   "Trajectory": {
-    "Enabled": true,
+    "Enabled": false,
     "MaxSearchRadiusKm": 30.0,
     "UncertaintyPercent": 20.0
   },
@@ -22,5 +22,9 @@
       "Statistical": 0.3,
       "Trajectory": 0.3
     }
+	},
+  "Bayesian": {
+    "Enabled": true
   }
+
 }

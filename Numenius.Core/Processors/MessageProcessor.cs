@@ -56,30 +56,28 @@ namespace Numenius.Core.Processors
                 if (blocked) return null;
             }
 
-            // Поиск контекста через reply_to_message_id
             ParsedMessage? contextMessage = null;
-			if (!string.IsNullOrEmpty(raw.ReplyToMessageId))
-			{
-				contextMessage = _contextAnalyzer.FindMessageById(raw.ReplyToMessageId);
-				if (contextMessage != null)
-					Console.WriteLine($"🧠 Найден контекст по reply: {raw.ReplyToMessageId} -> {contextMessage.CleanedText}");
-			}
+            if (!string.IsNullOrEmpty(raw.ReplyToMessageId))
+            {
+                contextMessage = _contextAnalyzer.FindMessageById(raw.ReplyToMessageId);
+                if (contextMessage != null)
+                    Console.WriteLine($"🧠 Найден контекст по reply: {raw.ReplyToMessageId} -> {contextMessage.CleanedText}");
+            }
 
-			var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
-			parsed.SourceMessageId = raw.Id;
+            var parsed = _nlp.Parse(raw.Text, raw.Sender, raw.SourceType, raw.ReceivedAt);
+            parsed.SourceMessageId = raw.Id;
 
-			if (contextMessage != null && parsed.Settlements.Count == 0)
-			{
-				Console.WriteLine($"🧠 Контекст из reply применён: {string.Join(",", contextMessage.Settlements.Select(s => s.Name))}");
-				parsed.Settlements = contextMessage.Settlements.ToList();
-				parsed.Direction = contextMessage.Direction;
-				parsed.ThreatType = contextMessage.ThreatType;
-				parsed.Category = contextMessage.Category;
-				parsed.Confidence = Math.Max(parsed.Confidence, contextMessage.Confidence * 0.8);
-				parsed.Flags.Add("ContextFromReply");
-			}
+            if (contextMessage != null && parsed.Settlements.Count == 0)
+            {
+                Console.WriteLine($"🧠 Контекст из reply применён: {string.Join(",", contextMessage.Settlements.Select(s => s.Name))}");
+                parsed.Settlements = contextMessage.Settlements.ToList();
+                parsed.Direction = contextMessage.Direction;
+                parsed.ThreatType = contextMessage.ThreatType;
+                parsed.Category = contextMessage.Category;
+                parsed.Confidence = Math.Max(parsed.Confidence, contextMessage.Confidence * 0.8);
+                parsed.Flags.Add("ContextFromReply");
+            }
 
-            // Контекстный анализ: если сообщение не содержит топонимов, но имеет тип угрозы или статус
             if (parsed.Settlements.Count == 0 && (parsed.ThreatType != "Unknown" || parsed.Status == "Watch" || parsed.Flags.Count > 0))
             {
                 var context = _contextAnalyzer.FindContext(parsed, raw.Text);
@@ -108,6 +106,8 @@ namespace Numenius.Core.Processors
                 var incidentWithoutGeo = await _scenarioManager.ProcessParsedMessageAsync(parsed);
                 if (incidentWithoutGeo != null)
                 {
+                    parsed.IncidentId = incidentWithoutGeo.Id;
+                    await _db.SaveParsedMessageAsync(parsed);
                     foreach (var predictor in _predictors)
                     {
                         var prediction = await predictor.GeneratePredictionAsync(incidentWithoutGeo);
@@ -118,7 +118,10 @@ namespace Numenius.Core.Processors
                         }
                     }
                 }
-                await _db.SaveParsedMessageAsync(parsed);
+                else
+                {
+                    await _db.SaveParsedMessageAsync(parsed);
+                }
                 _outputCache.AddParsedMessage(parsed);
                 _contextAnalyzer.AddMessage(parsed);
                 return parsed;
@@ -128,9 +131,16 @@ namespace Numenius.Core.Processors
             parsed.Confidence *= (0.5 + 0.5 * sourceWeight);
             parsed.Confidence = Math.Clamp(parsed.Confidence, 0.0, 1.0);
 
-            await _db.SaveParsedMessageAsync(parsed);
-
             var incident = await _scenarioManager.ProcessParsedMessageAsync(parsed);
+            if (incident != null)
+            {
+                parsed.IncidentId = incident.Id;
+                await _db.SaveParsedMessageAsync(parsed);
+            }
+            else
+            {
+                await _db.SaveParsedMessageAsync(parsed);
+            }
 
             if (incident != null && incident.Status != IncidentStatus.Terminated)
             {

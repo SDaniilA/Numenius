@@ -37,7 +37,8 @@ namespace Numenius.Core.Services
                     Status TEXT,
                     IsDuplicate INTEGER,
                     Confidence REAL,
-                    ReceivedAt TEXT
+                    ReceivedAt TEXT,
+					IncidentId INTEGER
                 )";
 
             var createIncidents = @"
@@ -82,10 +83,11 @@ namespace Numenius.Core.Services
                     Notes TEXT,
                     FOREIGN KEY(IncidentId) REFERENCES Incidents(Id)
                 )";
-            
+            // Добавляем колонку IncidentId
+			try { using var alterCmd = new SqliteCommand("ALTER TABLE Messages ADD COLUMN IncidentId INTEGER", 		conn); await alterCmd.ExecuteNonQueryAsync(); }
+			catch { /* колонка уже есть */ }
             // Добавляем колонку PredictorType
-            var alterPredictions = @"
-                ALTER TABLE Predictions ADD COLUMN PredictorType TEXT DEFAULT 'Graph';
+            var alterPredictions = @"ALTER TABLE Predictions ADD COLUMN PredictorType TEXT DEFAULT 'Graph';
             ";
             try { using var cmd = new SqliteCommand(alterPredictions, conn); await cmd.ExecuteNonQueryAsync(); }
             catch { /* колонка уже существует */ }
@@ -275,12 +277,12 @@ namespace Numenius.Core.Services
             await conn.OpenAsync();
             var sql = @"
                 INSERT OR REPLACE INTO Messages (
-                    Id, SourceType, Sender, RawText, CleanedText, ThreatType, Category,
-                    Settlements, Direction, Status, IsDuplicate, Confidence, ReceivedAt
-                ) VALUES (
-                    @Id, @SourceType, @Sender, @RawText, @CleanedText, @ThreatType, @Category,
-                    @Settlements, @Direction, @Status, @IsDuplicate, @Confidence, @ReceivedAt
-                )";
+				Id, SourceType, Sender, RawText, CleanedText, ThreatType, Category,
+				Settlements, Direction, Status, IsDuplicate, Confidence, ReceivedAt, IncidentId
+			) VALUES (
+				@Id, @SourceType, @Sender, @RawText, @CleanedText, @ThreatType, @Category,
+				@Settlements, @Direction, @Status, @IsDuplicate, @Confidence, @ReceivedAt, @IncidentId
+			)";
             using var cmd = new SqliteCommand(sql, conn);
             cmd.Parameters.AddWithValue("@Id", parsed.Id);
             cmd.Parameters.AddWithValue("@SourceType", parsed.SourceType);
@@ -295,6 +297,7 @@ namespace Numenius.Core.Services
             cmd.Parameters.AddWithValue("@IsDuplicate", parsed.IsDuplicate ? 1 : 0);
             cmd.Parameters.AddWithValue("@Confidence", parsed.Confidence);
             cmd.Parameters.AddWithValue("@ReceivedAt", parsed.ReceivedAt.ToString("o"));
+			cmd.Parameters.AddWithValue("@IncidentId", parsed.IncidentId.HasValue ? parsed.IncidentId.Value : (object)DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -722,6 +725,41 @@ namespace Numenius.Core.Services
 
 			if (closed > 0)
 				Console.WriteLine($"🧠 Закрыто {closed} старых инцидентов (по отбоям).");
+		}
+		
+		public async Task<ParsedMessage?> GetLastParsedMessageForIncidentAsync(int incidentId)
+		{
+			using var conn = new SqliteConnection(_connectionString);
+			await conn.OpenAsync();
+			var sql = @"
+				SELECT Id, SourceType, Sender, ReceivedAt, ThreatType, Category, Settlements, Direction, Status, Confidence, CleanedText, IncidentId
+				FROM Messages
+				WHERE IncidentId = @IncidentId
+				ORDER BY ReceivedAt DESC
+				LIMIT 1";
+			using var cmd = new SqliteCommand(sql, conn);
+			cmd.Parameters.AddWithValue("@IncidentId", incidentId);
+			using var reader = await cmd.ExecuteReaderAsync();
+			if (await reader.ReadAsync())
+			{
+				return new ParsedMessage
+				{
+					Id = reader.GetString(0),
+					SourceType = reader.GetString(1),
+					Sender = reader.GetString(2),
+					ReceivedAt = DateTime.Parse(reader.GetString(3)),
+					ThreatType = reader.GetString(4),
+					Category = (ThreatCategory)reader.GetInt32(5),
+					Settlements = reader.GetString(6).Split(',', StringSplitOptions.RemoveEmptyEntries)
+						.Select(n => new Settlement { Name = n }).ToList(),
+					Direction = reader.IsDBNull(7) ? null : reader.GetString(7),
+					Status = reader.GetString(8),
+					Confidence = reader.GetDouble(9),
+					CleanedText = reader.GetString(10),
+					IncidentId = reader.IsDBNull(11) ? null : reader.GetInt32(11)
+				};
+			}
+			return null;
 		}
 		
     }

@@ -40,6 +40,9 @@ namespace Numenius.Core.Models
 
         /// <summary>Дополнительные флаги (например, "отбой", "уничтожен")</summary>
         public HashSet<string> Flags { get; set; } = new();
+		
+		//
+		public int? IncidentId { get; set; } 
     }
 
     public enum ThreatCategory

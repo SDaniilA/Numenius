@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Numenius.Core.Config;
 using Numenius.Core.Interfaces;
@@ -77,13 +77,16 @@ namespace Numenius.App
             await db.InitializeAsync();
 
             var geo = new GeoService(db, Path.Combine(appSettingsPath, "settlements.json"));
+            var zoneService = new ZoneService(geo);
+            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService);
+
             var normalizer = new PorterStemmerNormalizer();
-			var nlp = new NlpParser(geo, normalizer);
+            var nlp = new NlpParser(geo, normalizer);
             var outputCache = new OutputCache();
-            var scenarioManager = new ScenarioManager(db, geo, heuristics);
             var predictorConfig = ConfigLoader.LoadModuleConfig<PredictorConfig>(
                 Path.Combine(appSettingsPath, "predictor_config.json"));
-			// ===== Контекстный анализатор =====
+
+            // Контекстный анализатор
             string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
             if (!File.Exists(contextConfigPath))
             {
@@ -93,31 +96,40 @@ namespace Numenius.App
             var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
             IContextAnalyzer contextAnalyzer = new SimpleContextAnalyzer(contextConfig);
             Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
-            IPredictor predictor;
+
+            // Загрузка ТТХ
+            string threatCharacteristicsPath = Path.Combine(appSettingsPath, "threat_characteristics.json");
+            var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(threatCharacteristicsPath);
+
+            var predictors = new List<IPredictor>();
+            if (predictorConfig.Bayesian.Enabled)
+            {
+                predictors.Add(new BayesianPredictor(geo, db, zoneService, heuristics, threatCharacteristics));
+                Console.WriteLine("🧠 Байесовский предиктор активирован.");
+            }
+            // Другие предикторы можно отключить, но оставим по желанию
             if (predictorConfig.Graph.Enabled)
             {
                 var gp = new GraphPredictor(geo, db, heuristics, predictorConfig.Graph);
                 await gp.UpdateGraphAsync();
-                predictor = gp;
+                predictors.Add(gp);
             }
-            else if (predictorConfig.Statistical.Enabled)
+            if (predictorConfig.Statistical.Enabled)
             {
-                predictor = new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical);
+                predictors.Add(new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical));
             }
-            else
+            if (predictorConfig.Trajectory.Enabled)
             {
-                throw new Exception("Нет активных предикторов для импорта.");
+                predictors.Add(new TrajectoryPredictor(geo, db, heuristics, predictorConfig.Trajectory));
             }
+
+            if (predictors.Count == 0)
+                throw new Exception("Нет активных предикторов.");
 
             var filterConfig = new FilterConfig();
-            //var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor> { predictor }, outputCache, filterConfig);
-			/* var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor>(), outputCache, filterConfig); */
-            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, new List<IPredictor>(), outputCache, filterConfig, contextAnalyzer);			
+            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig, contextAnalyzer);
             var importer = new OfflineImporter(processor, db);
             await importer.ImportAsync(jsonPath);
-
-            if (predictor is GraphPredictor gp2)
-                await gp2.UpdateGraphAsync();
 
             Console.WriteLine("✅ Импорт завершён. Нажмите любую клавишу для выхода.");
             Console.ReadKey();
@@ -173,8 +185,8 @@ namespace Numenius.App
 
             var db = new DatabaseService(Path.Combine(baseDir, "numenius.db"));
             await db.InitializeAsync();
-			// Закрываем старые инциденты (одноразово)
-			await db.CloseOldIncidentsAsync();
+            await db.CloseOldIncidentsAsync();
+
             var settlements = await db.GetAllSettlementsAsync();
             if (!settlements.Any())
             {
@@ -193,8 +205,19 @@ namespace Numenius.App
             }
 
             var geo = new GeoService(db, Path.Combine(appSettingsPath, "settlements.json"));
+            var zoneService = new ZoneService(geo);
+            var scenarioManager = new ScenarioManager(db, geo, heuristics, zoneService);
 
             var predictors = new List<IPredictor>();
+            // Байесовский предиктор — основной
+            if (predictorConfig.Bayesian.Enabled)
+            {
+                string threatCharacteristicsPath = Path.Combine(appSettingsPath, "threat_characteristics.json");
+                var threatCharacteristics = ConfigLoader.LoadThreatCharacteristics(threatCharacteristicsPath);
+                predictors.Add(new BayesianPredictor(geo, db, zoneService, heuristics, threatCharacteristics));
+                Console.WriteLine("🧠 Байесовский предиктор активирован.");
+            }
+            // Опционально другие предикторы (по конфигурации)
             if (predictorConfig.Graph.Enabled)
             {
                 var gp = new GraphPredictor(geo, db, heuristics, predictorConfig.Graph);
@@ -204,20 +227,19 @@ namespace Numenius.App
             }
             if (predictorConfig.Statistical.Enabled)
             {
-                var sp = new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical);
-                predictors.Add(sp);
+                predictors.Add(new StatisticalPredictor(db, geo, heuristics, predictorConfig.Statistical));
                 Console.WriteLine("📊 Статистический предиктор активирован.");
             }
-			if (predictorConfig.Trajectory.Enabled)
-			{
-				var tp = new TrajectoryPredictor(geo, db, heuristics, predictorConfig.Trajectory);
-				predictors.Add(tp);
-				Console.WriteLine("📈 Траекторный предиктор активирован.");
-			}
-			
+            if (predictorConfig.Trajectory.Enabled)
+            {
+                predictors.Add(new TrajectoryPredictor(geo, db, heuristics, predictorConfig.Trajectory));
+                Console.WriteLine("📈 Траекторный предиктор активирован.");
+            }
+
             if (predictors.Count == 0)
                 throw new Exception("Нет активных предикторов.");
-            // ===== Контекстный анализатор =====
+
+            // Контекстный анализатор
             string contextConfigPath = Path.Combine(appSettingsPath, "context_analyzer.json");
             if (!File.Exists(contextConfigPath))
             {
@@ -225,8 +247,7 @@ namespace Numenius.App
                 ConfigLoader.SaveConfig(defaultContext, contextConfigPath);
             }
             var contextConfig = ConfigLoader.LoadModuleConfig<ContextAnalyzerConfig>(contextConfigPath);
-
-			IContextAnalyzer contextAnalyzer;
+            IContextAnalyzer contextAnalyzer;
             switch (contextConfig.Mode.ToLowerInvariant())
             {
                 case "tfidf":
@@ -242,91 +263,74 @@ namespace Numenius.App
                     Console.WriteLine("🧠 Простой контекстный анализатор активирован.");
                     break;
             }
-            var normalizer = new PorterStemmerNormalizer();
-			var nlp = new NlpParser(geo, normalizer);
-            var outputCache = new OutputCache();
-            var scenarioManager = new ScenarioManager(db, geo, heuristics);
-            /* var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig); */
-            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig, contextAnalyzer);
-            /* var consoleOutput = new ConsoleOutputModule();
-            string ttsConfigPath = Path.Combine(appSettingsPath, "tts_output.json");
-            if (!File.Exists(ttsConfigPath))
-            {
-                var defaultTts = new TtsOutputConfig { Enabled = false };
-                ConfigLoader.SaveConfig(defaultTts, ttsConfigPath);
-            }
-            var ttsConfig = ConfigLoader.LoadModuleConfig<TtsOutputConfig>(ttsConfigPath);
-            var ttsOutput = new TtsOutputModule(ttsConfig);
-            await ttsOutput.InitializeAsync(); */
 
-            // НЕ ПОДПИСЫВАЕМСЯ НА СОБЫТИЯ outputCache, чтобы избежать дублирования
-            // Вся передача сообщений идёт через Orchestrator
+            var normalizer = new PorterStemmerNormalizer();
+            var nlp = new NlpParser(geo, normalizer);
+            var outputCache = new OutputCache();
+
+            var processor = new MessageProcessor(nlp, geo, db, scenarioManager, predictors, outputCache, filterConfig, contextAnalyzer);
 
             var orchestrator = new Orchestrator(orchestratorPath);
             orchestrator.RegisterProcessor(processor);
-            /* orchestrator.RegisterOutput(consoleOutput);
-            orchestrator.RegisterOutput(ttsOutput); */
-
             await orchestrator.StartAsync();
-			// ===== ФОНОВАЯ ЗАДАЧА: ЗАКРЫТИЕ ПО СРОКУ =====
-			_ = Task.Run(async () =>
-			{
-				// Первый запуск сразу после старта
-				await scenarioManager.ExpireOldIncidentsAsync();
 
-				while (true)
-				{
-					await Task.Delay(60000); // 1 минута
-					await scenarioManager.ExpireOldIncidentsAsync();
-				}
-			});
-            // Обработчик команд
-			_ = Task.Run(async () =>
-			{
-				while (true)
-				{
-					try
-					{
-						Console.Write("\n> ");
-						var line = Console.ReadLine();
-						if (line == null) break;
-						var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-						if (parts.Length == 0) continue;
+            // Фоновая задача: закрытие по сроку
+            _ = Task.Run(async () =>
+            {
+                await scenarioManager.ExpireOldIncidentsAsync();
+                while (true)
+                {
+                    await Task.Delay(60000);
+                    await scenarioManager.ExpireOldIncidentsAsync();
+                }
+            });
 
-						if (parts[0].Equals("report", StringComparison.OrdinalIgnoreCase))
-						{
-							var period = parts.Length > 1 ? parts[1].ToLower() : "day";
-							_ = Task.Run(async () =>
-							{
-								Console.WriteLine($"📊 Генерация отчёта за {period}...");
-								await GenerateAndShowReport(period, db, heuristics);
-							});
-						}
-						else if (parts[0].Equals("exit", StringComparison.OrdinalIgnoreCase))
-						{
-							Environment.Exit(0);
-						}
-						else
-						{
-							// Ручное сообщение
-							var raw = new RawMessage
-							{
-								Id = $"manual_{DateTime.UtcNow.Ticks}",
-								SourceType = "Manual",
-								Sender = "Ручной ввод",
-								Text = line,
-								ReceivedAt = DateTime.UtcNow,
-								Priority = 3
-							};
-							await processor.ProcessAsync(raw, CancellationToken.None);
-						}
-					}
-					catch (Exception ex)
-					{
-						Console.WriteLine($"⚠️ Ошибка обработки команды: {ex.Message}");
-					}
-				}
-			});
+            // Командный цикл (включая ручной ввод)
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    try
+                    {
+                        Console.Write("\n> ");
+                        var line = Console.ReadLine();
+                        if (line == null) break;
+                        var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length == 0) continue;
+
+                        if (parts[0].Equals("report", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var period = parts.Length > 1 ? parts[1].ToLower() : "day";
+                            _ = Task.Run(async () =>
+                            {
+                                Console.WriteLine($"📊 Генерация отчёта за {period}...");
+                                await GenerateAndShowReport(period, db, heuristics);
+                            });
+                        }
+                        else if (parts[0].Equals("exit", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Environment.Exit(0);
+                        }
+                        else
+                        {
+                            var raw = new RawMessage
+                            {
+                                Id = $"manual_{DateTime.UtcNow.Ticks}",
+                                SourceType = "Manual",
+                                Sender = "Ручной ввод",
+                                Text = line,
+                                ReceivedAt = DateTime.UtcNow,
+                                Priority = 3
+                            };
+                            await processor.ProcessAsync(raw, CancellationToken.None);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Ошибка обработки команды: {ex.Message}");
+                    }
+                }
+            });
 
             await Task.Delay(-1);
         }

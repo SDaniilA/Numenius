@@ -1,0 +1,27 @@
+{
+  "FPV": {
+    "MaxSpeedKmh": 160,
+    "MaxDistanceKm": 40,
+    "LifetimeMinutes": 30
+  },
+  "StrikeDrone": {
+    "MaxSpeedKmh": 150,
+    "MaxDistanceKm": 50,
+    "LifetimeMinutes": 60
+  },
+  "Recon": {
+    "MaxSpeedKmh": 80,
+    "MaxDistanceKm": 70,
+    "LifetimeMinutes": 120
+  },
+  "RearDrone": {
+    "MaxSpeedKmh": 200,
+    "MaxDistanceKm": 150,
+    "LifetimeMinutes": 60
+  },
+  "Rocket": {
+    "MaxSpeedKmh": 500,
+    "MaxDistanceKm": 100,
+    "LifetimeMinutes": 15
+  }
+}
