@@ -64,14 +64,20 @@ namespace Numenius.Core.Services
             double dist = _graph.GetDistance(lastPoint.Lat, lastPoint.Lon, firstNewPoint.Lat, firstNewPoint.Lon);
             double maxDistance = GetMaxDistanceKm(message.ThreatType);
 
-            // Если время < 0.1 мин, проверяем только расстояние
+            // Если время < 0.1 мин, проверяем расстояние с более строгим порогом
             if (timeDiffMinutes < 0.1)
-                return dist <= maxDistance + 3.0;
+            {
+                // Порог: не более 30% от maxDistance (или 15 км, если maxDistance больше)
+                double strictDistance = Math.Min(maxDistance * 0.3, 15.0);
+                return dist <= strictDistance + 3.0;
+            }
 
             double maxSpeed = GetMaxSpeedKmh(message.ThreatType);
             double maxTravelDistance = maxSpeed * (timeDiffMinutes / 60.0);
 
             if (dist > maxTravelDistance * 1.05 || dist > maxDistance + 3.0)
+                return false;
+            if (timeDiffMinutes > GetLifetimeMinutes(message.ThreatType))
                 return false;
 
             return true;
@@ -158,6 +164,14 @@ namespace Numenius.Core.Services
             double originLat = origin.Lat;
             double originLon = origin.Lon;
 
+            // Базовый азимут (от предыдущей к последней) для учёта вектора
+            double baseAzimuth = 0;
+            if (points.Count >= 2)
+            {
+                var prev = points[points.Count - 2];
+                baseAzimuth = _graph.GetAzimuth(prev.Lat, prev.Lon, origin.Lat, origin.Lon);
+            }
+
             Console.WriteLine($"[ZoneService] Сканирование секторов от ({originLat:F4}, {originLon:F4}), точек: {points.Count}");
 
             var sectorWeights = new Dictionary<int, double>();
@@ -171,6 +185,7 @@ namespace Numenius.Core.Services
                 bool hasNear = false;
                 foreach (var s in settlementsInSector)
                 {
+                    if (IsAdministrative(s.Name)) continue;
                     double dist = _graph.GetDistance(originLat, originLon, s.Lat, s.Lon);
                     double zoneWeight = GetZoneWeight(dist, GetMaxDistanceKm(incident.ThreatType));
                     if (zoneWeight >= 3.0)
@@ -178,12 +193,23 @@ namespace Numenius.Core.Services
                     weight += zoneWeight;
                 }
 
+                // Если есть НП в ближней зоне, добавляем бонус
                 if (hasNear)
                     weight += 5.0;
+
+                // Если есть вектор и сектор близко к нему, добавляем бонус
+                if (points.Count >= 2)
+                {
+                    double angularDiff = Math.Abs(deg - baseAzimuth);
+                    if (angularDiff > 180) angularDiff = 360 - angularDiff;
+                    if (angularDiff <= 30)
+                        weight += 2.0;
+                }
 
                 sectorWeights[deg] = weight;
             }
 
+            // Выбираем топ-3 сектора
             var topSectors = sectorWeights
                 .OrderByDescending(kv => kv.Value)
                 .Take(count)
@@ -196,9 +222,11 @@ namespace Numenius.Core.Services
             var results = new List<RadarResult>();
             foreach (var sector in topSectors)
             {
+                // Внутри сектора берём ближайшие 2-3 НП
                 var nearest = _graph.GetNearestSettlementsInSector(originLat, originLon, sector.Key, sector.Key + 5, 3);
                 foreach (var s in nearest)
                 {
+                    if (IsAdministrative(s.Name)) continue;
                     double dist = _graph.GetDistance(originLat, originLon, s.Lat, s.Lon);
                     double zoneWeight = GetZoneWeight(dist, GetMaxDistanceKm(incident.ThreatType));
 
@@ -212,6 +240,7 @@ namespace Numenius.Core.Services
                 }
             }
 
+            // Группируем по НП, суммируем веса (если дублируются из разных секторов)
             var grouped = results
                 .GroupBy(r => r.SettlementName)
                 .Select(g => new RadarResult
@@ -233,7 +262,7 @@ namespace Numenius.Core.Services
             return grouped;
         }
 
-        // ========== Зона для разведчика ==========
+        // ========== Зона для разведчика (полоса) ==========
         public Zone CreateReconZone(List<Settlement> settlements, double reconRadiusKm = 7.0)
         {
             var points = settlements.Select(s => new IncidentPoint
@@ -246,6 +275,7 @@ namespace Numenius.Core.Services
 
             if (points.Count == 0) return null;
 
+            // Одна точка - круг
             if (points.Count == 1)
             {
                 var zone = new Zone
@@ -260,6 +290,7 @@ namespace Numenius.Core.Services
                     SettlementNames = new List<string>()
                 };
 
+                // Находим все НП в радиусе
                 foreach (var name in _graph.GetSettlementNames())
                 {
                     var s = _graph.GetSettlement(name);
@@ -269,11 +300,14 @@ namespace Numenius.Core.Services
                 return zone;
             }
 
+            // Несколько точек - строим полосу
             var zonePoints = new List<IncidentPoint>();
             for (int i = 0; i < points.Count - 1; i++)
             {
                 var p1 = points[i];
                 var p2 = points[i + 1];
+
+                // Шаг интерполяции ~2 км
                 double segmentDist = _graph.GetDistance(p1.Lat, p1.Lon, p2.Lat, p2.Lon);
                 int steps = Math.Max(2, (int)(segmentDist / 2.0));
                 for (int t = 0; t <= steps; t++)
@@ -291,9 +325,11 @@ namespace Numenius.Core.Services
                 }
             }
 
+            // Центр – среднее всех интерполяционных точек
             double centerLat = zonePoints.Average(p => p.Lat);
             double centerLon = zonePoints.Average(p => p.Lon);
 
+            // Находим все НП в радиусе от любого сегмента
             var allSettlements = _graph.GetAllSettlements();
             var affected = new List<string>();
             foreach (var s in allSettlements)
@@ -339,7 +375,22 @@ namespace Numenius.Core.Services
             return 40;
         }
 
-        // ========== Вспомогательные ==========
+        public double GetLifetimeMinutes(string threatType)
+        {
+            if (!string.IsNullOrEmpty(threatType) && _threatCharacteristics.TryGetValue(threatType, out var tth))
+                return tth.LifetimeMinutes;
+            return 30;
+        }
+
+        // ========== Вспомогательные методы ==========
+        private bool IsAdministrative(string name)
+        {
+            return name.Contains("район", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("округ", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("область", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("МО", StringComparison.OrdinalIgnoreCase);
+        }
+
         private double GetZoneWeight(double distance, double maxDistance)
         {
             if (maxDistance <= 0) return 0.5;

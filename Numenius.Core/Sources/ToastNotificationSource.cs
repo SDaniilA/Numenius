@@ -151,11 +151,25 @@ namespace Numenius.Core.Sources
 						EventTime = notif.CreationTime.UtcDateTime, // время появления уведомления
 						ReplyToMessageId = null
 					};
+					// DEBUG
+					//Console.WriteLine($"✅ Событие вызвано для уведомления {id}");
+					/* var binding = notif.Notification.Visual.GetBinding(KnownNotificationBindings.ToastGeneric);
+					if (binding != null)
+					{
+						var texts = binding.GetTextElements();
+						var textParts = new List<string>();
+						foreach (var text in texts)
+						{
+							textParts.Add(text.Text);
+						}
+						string fullText = string.Join(" ", textParts);
+						Console.WriteLine($"[ToastRaw] Sender={sender} | Message={message} | FullText={fullText}");
+					} */
+					// DEBUG
+                    
+					OnMessageReceived?.Invoke(this, raw);
 
-                    OnMessageReceived?.Invoke(this, raw);
-					// DEBUG
-					Console.WriteLine($"✅ Событие вызвано для уведомления {id}");
-					// DEBUG
+
                     lock (_lock)
                     {
                         _processedIds.Add(id);

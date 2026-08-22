@@ -320,15 +320,16 @@ namespace Numenius.App
                         }
                         else
                         {
-                            var raw = new RawMessage
-                            {
-                                Id = $"manual_{DateTime.UtcNow.Ticks}",
-                                SourceType = "Manual",
-                                Sender = "Ручной ввод",
-                                Text = line,
-                                ReceivedAt = DateTime.UtcNow,
-                                Priority = 3
-                            };
+                        var raw = new RawMessage
+						{
+							Id = $"manual_{DateTime.UtcNow.Ticks}",
+							SourceType = "Manual",
+							Sender = "Ручной ввод",
+							Text = line,
+							ReceivedAt = DateTime.UtcNow,
+							Priority = 3,
+							EventTime = DateTime.UtcNow // время ввода = время события
+						};
                             await processor.ProcessAsync(raw, CancellationToken.None);
                         }
                     }

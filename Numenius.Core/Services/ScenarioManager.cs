@@ -350,6 +350,8 @@ namespace Numenius.Core.Services
                 return "Rocket";
             if (lower.Contains("хорнет") || lower.Contains("дартс"))
                 return "StrikeDrone";
+			if (lower.Contains("шарк") || lower.Contains("разведчик") || lower.Contains("разведовательн"))
+				return "Recon";
             return null;
         }
     }

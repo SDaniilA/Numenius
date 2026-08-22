@@ -83,6 +83,7 @@ namespace Numenius.Core.Predictors
         public async Task<Prediction?> GeneratePredictionAsync(Incident incident)
         {
             Console.WriteLine($"[{Name}] Попытка прогноза для инц. #{incident.Id}, точек: {incident.Points.Count}");
+
             if (incident == null || incident.Points == null || incident.Points.Count < 1)
             {
                 Console.WriteLine($"[{Name}] Возврат null: недостаточно точек");
@@ -101,6 +102,40 @@ namespace Numenius.Core.Predictors
             if (!_threatCharacteristics.TryGetValue(threatType, out var tth))
                 tth = new ThreatCharacteristics { MaxSpeedKmh = 160, MaxDistanceKm = 40, LifetimeMinutes = 30 };
 
+            // Для разведчиков используем зону покрытия
+            if (threatType == "Recon" || threatType == "Shark")
+            {
+                var reconZone = _zoneService.CreateReconZone(
+                    incident.Points.Select(p => new Settlement
+                    {
+                        Name = p.SettlementName,
+                        Lat = p.Lat,
+                        Lon = p.Lon
+                    }).ToList());
+                if (reconZone == null || reconZone.SettlementNames.Count == 0)
+                {
+                    Console.WriteLine($"[{Name}] Возврат null: нет зоны покрытия разведчика");
+                    return null;
+                }
+
+                var affected = reconZone.SettlementNames.Take(3).ToList();
+                var reconPrediction = new Prediction
+                {
+                    IncidentId = incident.Id,
+                    ThreatType = incident.ThreatType,
+                    ZoneGeoJson = reconZone.ToGeoJson(),
+                    AffectedSettlements = affected,
+                    AttackWindowStart = incident.LastSeen.AddMinutes(5),
+                    AttackWindowEnd = incident.LastSeen.AddMinutes(tth.LifetimeMinutes),
+                    Confidence = 0.7, // для разведчика можно задать фиксированную или вычислять
+                    Notes = $"Разведывательная зона: {string.Join(", ", affected)}",
+                    PredictorType = Name
+                };
+                GraphLogger.LogPrediction(incident.Id, incident.ThreatType, reconPrediction.Confidence, string.Join(", ", reconPrediction.AffectedSettlements), Name);
+                return reconPrediction;
+            }
+
+            // Обычный сценарий — радар (сканирование секторов)
             var radarResults = _zoneService.ScanSectors(incident, 3);
             if (radarResults.Count == 0)
             {
