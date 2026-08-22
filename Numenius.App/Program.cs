@@ -13,6 +13,7 @@ using Numenius.Core.Outputs;
 using Numenius.Core.Predictors;
 using Numenius.Core.Processors;
 using Numenius.Core.Services;
+using Numenius.Core.Sources;
 
 namespace Numenius.App
 {
@@ -169,7 +170,19 @@ namespace Numenius.App
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, sslPolicyErrors) => true;
 
             // Загрузка конфигураций
-            string orchestratorPath = Path.Combine(appSettingsPath, "orchestrator.json");
+            string telegramConfigPath = Path.Combine(appSettingsPath, "telegram_config.json");
+			if (File.Exists(telegramConfigPath))
+			{
+				var telegramConfig = ConfigLoader.LoadModuleConfig<TelegramApiConfig>(telegramConfigPath);
+				if (telegramConfig.ApiId != 0 && !string.IsNullOrEmpty(telegramConfig.ApiHash))
+				{
+					var telegramSource = new TelegramApiSource(telegramConfig);
+					orchestrator.RegisterSource(telegramSource);
+					Console.WriteLine("📡 Telegram API источник активирован.");
+				}
+			}
+			
+			string orchestratorPath = Path.Combine(appSettingsPath, "orchestrator.json");
             if (!File.Exists(orchestratorPath))
             {
                 var defaultOrch = new OrchestratorConfig();
